@@ -1,1 +1,139 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Bingo Blitz</title>
 
+  <style>
+    body {
+      font-family: Arial;
+      padding: 30px;
+    }
+
+    input {
+      padding: 8px;
+      margin-bottom: 10px;
+      display: block;
+    }
+
+    button {
+      padding: 10px 15px;
+      cursor: pointer;
+    }
+
+    #phone-input input {
+      width: 60px;
+      font-size: 18px;
+      text-align: center;
+      margin-right: 5px;
+      display: inline-block;
+    }
+  </style>
+</head>
+<body>
+
+<h2>Create Room</h2>
+
+<input id="name" placeholder="Your Name">
+<input id="password" placeholder="Room Password">
+
+<p>Phone Number</p>
+<div id="phone-input">
+  <input maxlength="3" id="area" placeholder="XXX">
+  <input maxlength="3" id="prefix" placeholder="XXX">
+  <input maxlength="4" id="line" placeholder="XXXX">
+</div>
+
+<br>
+<button onclick="handleCreateRoom()">Create Room</button>
+
+<p id="result"></p>
+
+<script>
+const API_URL = "https://bingo-blitz-production.up.railway.app";
+
+// 🔥 Auto-advance inputs
+const inputs = ["area", "prefix", "line"].map(id => document.getElementById(id));
+
+inputs.forEach((input, i) => {
+    input.addEventListener("input", () => {
+        input.value = input.value.replace(/\D/g, "");
+        if (input.value.length === input.maxLength && inputs[i + 1]) {
+            inputs[i + 1].focus();
+        }
+    });
+});
+
+// 🔥 Build phone slots
+function getPhoneSlots() {
+    return {
+        area: document.getElementById("area").value,
+        prefix: document.getElementById("prefix").value,
+        line: document.getElementById("line").value
+    };
+}
+
+// 🔥 Create room
+async function handleCreateRoom() {
+    const resultEl = document.getElementById("result");
+
+    const name = document.getElementById("name").value;
+    const password = document.getElementById("password").value;
+
+    const phoneSlots = getPhoneSlots();
+
+    if (!name || !password) {
+        resultEl.innerText = "Missing name or password";
+        return;
+    }
+
+    if (
+        phoneSlots.area.length !== 3 ||
+        phoneSlots.prefix.length !== 3 ||
+        phoneSlots.line.length !== 4
+    ) {
+        resultEl.innerText = "Invalid phone number";
+        return;
+    }
+
+    try {
+        const res = await fetch(`${API_URL}/api/rooms`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+                password,
+                gridSize: 5,
+                prompts: generatePrompts(),
+                arbiterId: "host",
+                arbiterName: name,
+                arbiterPhoneSlots: phoneSlots
+            })
+        });
+
+        const data = await res.json();
+
+        if (!res.ok) {
+            console.error(data);
+            resultEl.innerText = data.error || "Server error";
+            return;
+        }
+
+        resultEl.innerText = "Room Code: " + data.roomCode;
+
+    } catch (err) {
+        console.error(err);
+        resultEl.innerText = "Server connection failed";
+    }
+}
+
+// 🔥 TEMP prompts (you can customize later)
+function generatePrompts() {
+    const prompts = [];
+    for (let i = 1; i <= 25; i++) {
+        prompts.push("Prompt " + i);
+    }
+    return prompts;
+}
+</script>
+
+</body>
+</html>
