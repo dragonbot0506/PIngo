@@ -415,21 +415,3 @@ const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => {
     console.log(`Bingo server running on port ${PORT}`);
 });
-
-(async () => {
-  console.log('TEST SMS START');
-
-  try {
-    const res = await client.messages.create({
-      body: 'It works 🔥',
-      from: process.env.TWILIO_PHONE,
-      to: '+19174457025'
-    });
-
-    console.log('SUCCESS:', res.sid);
-  } catch (err) {
-    console.error('ERROR:', err.message);
-  }
-
-  console.log('TEST SMS END');
-})();
