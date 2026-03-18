@@ -15,17 +15,12 @@
       display: block;
     }
 
-    button {
-      padding: 10px 15px;
-      cursor: pointer;
-    }
-
     #phone-input input {
       width: 60px;
       font-size: 18px;
       text-align: center;
-      margin-right: 5px;
       display: inline-block;
+      margin-right: 5px;
     }
   </style>
 </head>
@@ -33,8 +28,8 @@
 
 <h2>Create Room</h2>
 
-<input id="name" placeholder="Your Name">
-<input id="password" placeholder="Room Password">
+<input id="name" placeholder="Name">
+<input id="password" placeholder="Password">
 
 <p>Phone Number</p>
 <div id="phone-input">
@@ -51,19 +46,17 @@
 <script>
 const API_URL = "https://bingo-blitz-production.up.railway.app";
 
-// 🔥 Auto-advance inputs
-const inputs = ["area", "prefix", "line"].map(id => document.getElementById(id));
-
-inputs.forEach((input, i) => {
-    input.addEventListener("input", () => {
-        input.value = input.value.replace(/\D/g, "");
-        if (input.value.length === input.maxLength && inputs[i + 1]) {
-            inputs[i + 1].focus();
+// auto advance
+["area","prefix","line"].forEach((id, i, arr) => {
+    const el = document.getElementById(id);
+    el.addEventListener("input", () => {
+        el.value = el.value.replace(/\D/g, "");
+        if (el.value.length === el.maxLength && arr[i+1]) {
+            document.getElementById(arr[i+1]).focus();
         }
     });
 });
 
-// 🔥 Build phone slots
 function getPhoneSlots() {
     return {
         area: document.getElementById("area").value,
@@ -72,28 +65,23 @@ function getPhoneSlots() {
     };
 }
 
-// 🔥 Create room
+// ALWAYS VALID (25 prompts)
+function generatePrompts() {
+    const arr = [];
+    for (let i = 1; i <= 25; i++) {
+        arr.push("Prompt " + i);
+    }
+    return arr;
+}
+
 async function handleCreateRoom() {
-    const resultEl = document.getElementById("result");
+    const result = document.getElementById("result");
 
     const name = document.getElementById("name").value;
     const password = document.getElementById("password").value;
-
     const phoneSlots = getPhoneSlots();
 
-    if (!name || !password) {
-        resultEl.innerText = "Missing name or password";
-        return;
-    }
-
-    if (
-        phoneSlots.area.length !== 3 ||
-        phoneSlots.prefix.length !== 3 ||
-        phoneSlots.line.length !== 4
-    ) {
-        resultEl.innerText = "Invalid phone number";
-        return;
-    }
+    console.log("SENDING:", { name, password, phoneSlots });
 
     try {
         const res = await fetch(`${API_URL}/api/rooms`, {
@@ -111,27 +99,19 @@ async function handleCreateRoom() {
 
         const data = await res.json();
 
+        console.log("RESPONSE:", data);
+
         if (!res.ok) {
-            console.error(data);
-            resultEl.innerText = data.error || "Server error";
+            result.innerText = data.error;
             return;
         }
 
-        resultEl.innerText = "Room Code: " + data.roomCode;
+        result.innerText = "Room Code: " + data.roomCode;
 
     } catch (err) {
         console.error(err);
-        resultEl.innerText = "Server connection failed";
+        result.innerText = "Server error";
     }
-}
-
-// 🔥 TEMP prompts (you can customize later)
-function generatePrompts() {
-    const prompts = [];
-    for (let i = 1; i <= 25; i++) {
-        prompts.push("Prompt " + i);
-    }
-    return prompts;
 }
 </script>
 
