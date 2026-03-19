@@ -275,7 +275,8 @@ app.get('/api/rooms', (req, res) => {
         roomCode: code,
         partyName: room.partyName || 'Unnamed Party',
         participantCount: Object.keys(room.participants).length,
-        gridSize: room.gridSize
+        gridSize: room.gridSize,
+        hostName: room.arbiter?.name || 'Unknown'
     }));
     res.json(list);
 });
