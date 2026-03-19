@@ -1553,7 +1553,9 @@ function renderParticipants(containerId, participants, total, isArbiterView) {
     return;
   }
   el.innerHTML = participants.map(p => {
-    const pct = Math.round((p.checked.length / total) * 100);
+    // Use actual card length per player for accurate progress (avoids stale gridSize)
+    const playerTotal = (p.card && p.card.length) ? p.card.length : total;
+    const pct = playerTotal > 0 ? Math.round((p.checked.length / playerTotal) * 100) : 0;
     const isMe = p.id === loggedInUser;
     const hostTag = p.isHost ? '<span style="font-size:11px;color:var(--accent3);font-weight:700;letter-spacing:0.05em;">[HOST]</span> ' : '';
     const kickBtn = isArbiterView && !p.isHost && !isMe
@@ -1566,7 +1568,7 @@ function renderParticipants(containerId, participants, total, isArbiterView) {
           <div class="participant-progress">
             <div class="participant-progress-bar" style="width:${pct}%"></div>
           </div>
-          <div class="participant-stat">${p.checked.length}/${total} checked</div>
+          <div class="participant-stat">${p.checked.length}/${playerTotal} checked</div>
         `}
         ${kickBtn}
       </div>
@@ -1670,15 +1672,29 @@ async function loadLobby() {
       list.innerHTML = '<div class="empty-state">No active parties right now.</div>';
       return;
     }
-    list.innerHTML = rooms.map(r => `
-      <div class="lobby-card" onclick="promptLobbyJoin('${r.roomCode}', '${(r.partyName || '').replace(/'/g, "\\'")}')">
-        <div>
-          <div class="lobby-card-name">${r.partyName || 'Unnamed Party'}</div>
-          <div class="lobby-card-info">Hosted by ${r.hostName}</div>
-        </div>
-        <div class="lobby-card-players">${r.participantCount} player${r.participantCount !== 1 ? 's' : ''}</div>
-      </div>
-    `).join('');
+    list.innerHTML = rooms.map(r => {
+      if (r.membership) {
+        return `
+          <div class="lobby-card" onclick="rejoinFromLobby('${r.roomCode}', ${r.membership === 'host'})">
+            <div>
+              <div class="lobby-card-name">${r.partyName || 'Unnamed Party'}</div>
+              <div class="lobby-card-info">Hosted by ${r.hostName}</div>
+            </div>
+            <div style="display:flex;flex-direction:column;align-items:flex-end;gap:4px;">
+              <div class="lobby-card-players">${r.participantCount} player${r.participantCount !== 1 ? 's' : ''}</div>
+              <span style="font-size:11px;color:var(--accent);font-weight:700;letter-spacing:0.05em;">ALREADY JOINED</span>
+            </div>
+          </div>`;
+      }
+      return `
+        <div class="lobby-card" onclick="promptLobbyJoin('${r.roomCode}', '${(r.partyName || '').replace(/'/g, "\\'")}')">
+          <div>
+            <div class="lobby-card-name">${r.partyName || 'Unnamed Party'}</div>
+            <div class="lobby-card-info">Hosted by ${r.hostName}</div>
+          </div>
+          <div class="lobby-card-players">${r.participantCount} player${r.participantCount !== 1 ? 's' : ''}</div>
+        </div>`;
+    }).join('');
   } catch {
     list.innerHTML = '<div class="empty-state">Failed to load parties.</div>';
   }
@@ -1695,6 +1711,16 @@ function promptLobbyJoin(roomCode, partyName) {
 function closeLobbyModal() {
   document.getElementById('lobby-password-modal').style.display = 'none';
   lobbySelectedRoom = null;
+}
+
+function rejoinFromLobby(roomCode, isHost) {
+  initSocket();
+  setupSocketListeners(isHost);
+  socket.emit('rejoin', {
+    roomCode,
+    username: loggedInUser,
+    isArbiter: isHost
+  });
 }
 
 function joinFromLobby() {
