@@ -844,7 +844,7 @@
   <div id="welcome-user" style="font-size:14px;color:var(--muted);margin-bottom:24px;text-align:center;"></div>
   <div class="landing-btns">
     <button class="btn btn-primary" onclick="showScreen('screen-arbiter-setup')">⚡ CREATE GAME</button>
-    <button class="btn btn-secondary" onclick="showScreen('screen-join')">🎯 JOIN GAME</button>
+    <button class="btn btn-secondary" onclick="openJoinScreen()">🎯 JOIN GAME</button>
     <button class="btn btn-secondary" onclick="openLobby()">🏠 BROWSE PARTIES</button>
     <button class="btn btn-ghost" onclick="doLogout()" style="margin-top:8px;">Log Out</button>
   </div>
@@ -1278,6 +1278,13 @@ function setupArbiterDashboard(name, roomData) {
 }
 
 // ── JOIN ROOM ──
+function openJoinScreen() {
+  document.getElementById('join-code').value = '';
+  document.getElementById('join-password').value = '';
+  // Keep the user's name pre-filled
+  showScreen('screen-join');
+}
+
 async function joinRoom() {
   const code = document.getElementById('join-code').value.trim().toUpperCase();
   const password = document.getElementById('join-password').value.trim();
@@ -1458,7 +1465,7 @@ async function loadLobby() {
       <div class="lobby-card" onclick="promptLobbyJoin('${r.roomCode}', '${(r.partyName || '').replace(/'/g, "\\'")}')">
         <div>
           <div class="lobby-card-name">${r.partyName || 'Unnamed Party'}</div>
-          <div class="lobby-card-info">${r.gridSize}×${r.gridSize} grid</div>
+          <div class="lobby-card-info">Hosted by ${r.hostName}</div>
         </div>
         <div class="lobby-card-players">${r.participantCount} player${r.participantCount !== 1 ? 's' : ''}</div>
       </div>
@@ -1484,15 +1491,16 @@ function closeLobbyModal() {
 function joinFromLobby() {
   const password = document.getElementById('lobby-password-input').value.trim();
   if (!password) return showToast('Enter the password!');
+  const roomCode = lobbySelectedRoom;
   closeLobbyModal();
 
-  document.getElementById('join-code').value = lobbySelectedRoom;
+  document.getElementById('join-code').value = roomCode;
   document.getElementById('join-password').value = password;
   document.getElementById('join-name').value = loggedInUser;
 
   initSocket();
   setupSocketListeners(false);
-  socket.emit('participant:join', { roomCode: lobbySelectedRoom, password, name: loggedInUser, username: loggedInUser });
+  socket.emit('participant:join', { roomCode, password, name: loggedInUser, username: loggedInUser });
 }
 
 // ── PUSH NOTIFICATIONS ──
