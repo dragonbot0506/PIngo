@@ -337,6 +337,35 @@ app.post('/api/push-subscribe', (req, res) => {
     res.json({ success: true });
 });
 
+app.get('/api/my-rooms', requireAuth, (req, res) => {
+    const username = req.username;
+    const myRooms = [];
+
+    for (const [code, room] of Object.entries(rooms)) {
+        if (room.arbiter && room.arbiter.username === username) {
+            myRooms.push({
+                roomCode: code,
+                partyName: room.partyName || 'Unnamed Party',
+                role: 'host',
+                playerCount: Object.keys(room.participants).length + 1,
+                gridSize: room.gridSize,
+                hostName: room.arbiter.name
+            });
+        } else if (room.participants[username]) {
+            myRooms.push({
+                roomCode: code,
+                partyName: room.partyName || 'Unnamed Party',
+                role: 'player',
+                playerCount: Object.keys(room.participants).length + (room.arbiter ? 1 : 0),
+                gridSize: room.gridSize,
+                hostName: room.arbiter?.name || 'Unknown'
+            });
+        }
+    }
+
+    res.json(myRooms);
+});
+
 app.post('/api/leave-room', (req, res) => {
     const token = req.cookies?.session;
     if (!token || !sessions[token]) {

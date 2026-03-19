@@ -843,10 +843,11 @@
   </div>
   <div id="welcome-user" style="font-size:14px;color:var(--muted);margin-bottom:24px;text-align:center;"></div>
   <div class="landing-btns">
-    <button class="btn btn-primary" onclick="showScreen('screen-arbiter-setup')">⚡ CREATE GAME</button>
-    <button class="btn btn-secondary" onclick="openJoinScreen()">🎯 JOIN GAME</button>
-    <button class="btn btn-secondary" onclick="openLobby()">🏠 BROWSE PARTIES</button>
-    <button class="btn btn-ghost" onclick="doLogout()" style="margin-top:8px;">Log Out</button>
+    <button class="btn btn-primary" onclick="showScreen('screen-arbiter-setup')">CREATE GAME</button>
+    <button class="btn btn-secondary" onclick="openJoinScreen()">JOIN GAME</button>
+    <button class="btn btn-secondary" onclick="openLobby()">BROWSE PARTIES</button>
+    <button class="btn btn-secondary" onclick="openMyParties()">MY PARTIES</button>
+    <button class="btn btn-ghost" onclick="openSettings()" style="margin-top:8px;">Settings</button>
   </div>
 </div>
 
@@ -875,6 +876,65 @@
     <div class="confirm-btns">
       <button class="btn btn-secondary" onclick="closeLobbyModal()">Cancel</button>
       <button class="btn btn-primary" onclick="joinFromLobby()">Join</button>
+    </div>
+  </div>
+</div>
+
+<!-- ──────────────────────── MY PARTIES ──────────────────────── -->
+<div id="screen-my-parties" class="screen">
+  <div class="top-bar">
+    <button class="btn btn-ghost" onclick="showScreen('screen-landing')">← Back</button>
+    <div class="top-bar-title">MY PARTIES</div>
+    <button class="btn btn-ghost" onclick="loadMyParties()">Refresh</button>
+  </div>
+  <div style="flex:1;overflow-y:auto;-webkit-overflow-scrolling:touch;padding:16px;">
+    <div id="my-parties-list" class="lobby-list">
+      <div class="empty-state">Loading...</div>
+    </div>
+  </div>
+</div>
+
+<!-- ──────────────────────── SETTINGS ──────────────────────── -->
+<div id="screen-settings" class="screen">
+  <div class="top-bar">
+    <button class="btn btn-ghost" onclick="showScreen('screen-landing')">← Back</button>
+    <div class="top-bar-title">SETTINGS</div>
+    <div style="width:60px"></div>
+  </div>
+  <div style="flex:1;overflow-y:auto;-webkit-overflow-scrolling:touch;padding:16px;">
+    <div style="display:flex;flex-direction:column;gap:16px;">
+
+      <!-- Account -->
+      <div style="background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:20px 16px;">
+        <div class="section-header" style="margin:0 0 12px;">ACCOUNT</div>
+        <div class="info-row">
+          <span>Username</span>
+          <strong id="settings-username" style="color:var(--accent);font-family:var(--font-display);font-size:18px;letter-spacing:0.05em;"></strong>
+        </div>
+      </div>
+
+      <!-- Notifications -->
+      <div style="background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:20px 16px;">
+        <div class="section-header" style="margin:0 0 12px;">NOTIFICATIONS</div>
+        <div id="settings-notif-content"></div>
+      </div>
+
+      <!-- About -->
+      <div style="background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:20px 16px;">
+        <div class="section-header" style="margin:0 0 12px;">ABOUT</div>
+        <div class="info-row">
+          <span>App</span>
+          <strong>PIngo</strong>
+        </div>
+        <div class="info-row" style="margin-top:8px;">
+          <span>Version</span>
+          <strong>1.0</strong>
+        </div>
+      </div>
+
+      <!-- Log Out -->
+      <button class="btn btn-danger" onclick="doLogout()" style="margin-top:8px;">LOG OUT</button>
+
     </div>
   </div>
 </div>
@@ -1986,6 +2046,109 @@ async function deleteParty() {
 function kickPlayer(playerId) {
   if (!socket || !currentRoom) return;
   socket.emit('host:kick', { roomCode: currentRoom, participantId: playerId });
+}
+
+// ── MY PARTIES ──
+async function openMyParties() {
+  showScreen('screen-my-parties');
+  await loadMyParties();
+}
+
+async function loadMyParties() {
+  const list = document.getElementById('my-parties-list');
+  list.innerHTML = '<div class="empty-state">Loading...</div>';
+  try {
+    const resp = await fetch('/api/my-rooms');
+    if (!resp.ok) {
+      list.innerHTML = '<div class="empty-state">Failed to load parties.</div>';
+      return;
+    }
+    const myRooms = await resp.json();
+    if (myRooms.length === 0) {
+      list.innerHTML = '<div class="empty-state">You are not in any parties yet. Create or join one!</div>';
+      return;
+    }
+    list.innerHTML = myRooms.map(r => {
+      const roleBadge = r.role === 'host'
+        ? '<span style="font-size:11px;font-weight:700;color:var(--accent3);letter-spacing:0.05em;background:rgba(71,212,255,0.1);padding:2px 8px;border-radius:6px;">[HOST]</span>'
+        : '<span style="font-size:11px;font-weight:700;color:var(--accent);letter-spacing:0.05em;background:rgba(232,255,71,0.1);padding:2px 8px;border-radius:6px;">[PLAYER]</span>';
+      return `
+        <div class="lobby-card" onclick="rejoinFromMyParties('${r.roomCode}', ${r.role === 'host'})">
+          <div>
+            <div class="lobby-card-name">${r.partyName}</div>
+            <div class="lobby-card-info">${roleBadge} Hosted by ${r.hostName}</div>
+          </div>
+          <div style="display:flex;flex-direction:column;align-items:flex-end;gap:4px;">
+            <div class="lobby-card-players">${r.playerCount} player${r.playerCount !== 1 ? 's' : ''}</div>
+            <span style="font-size:11px;color:var(--accent3);font-weight:700;">REJOIN →</span>
+          </div>
+        </div>
+      `;
+    }).join('');
+  } catch {
+    list.innerHTML = '<div class="empty-state">Failed to load parties.</div>';
+  }
+}
+
+function rejoinFromMyParties(roomCode, isHost) {
+  initSocket();
+  setupSocketListeners(isHost);
+  socket.emit('rejoin', {
+    roomCode,
+    username: loggedInUser,
+    isArbiter: isHost
+  });
+}
+
+// ── SETTINGS ──
+function openSettings() {
+  document.getElementById('settings-username').textContent = loggedInUser || '';
+  refreshNotifStatus();
+  showScreen('screen-settings');
+}
+
+function refreshNotifStatus() {
+  const container = document.getElementById('settings-notif-content');
+
+  if (!('serviceWorker' in navigator) || !('PushManager' in window)) {
+    container.innerHTML = '<div style="font-size:13px;color:var(--muted);">Push notifications are not supported in this browser.</div>';
+    return;
+  }
+
+  if (Notification.permission === 'denied') {
+    container.innerHTML = '<div style="font-size:13px;color:var(--accent2);">Notifications are blocked. Please enable them in your browser settings.</div>';
+    return;
+  }
+
+  if (Notification.permission === 'granted') {
+    container.innerHTML = `
+      <div style="display:flex;align-items:center;gap:8px;">
+        <span style="width:8px;height:8px;border-radius:50%;background:var(--accent);display:inline-block;"></span>
+        <span style="font-size:13px;color:var(--text);">Notifications enabled</span>
+      </div>
+      <div style="font-size:12px;color:var(--muted);margin-top:6px;">You will be notified when players complete tasks in your active game.</div>
+    `;
+    return;
+  }
+
+  container.innerHTML = `
+    <div style="font-size:13px;color:var(--muted);margin-bottom:10px;">Enable push notifications to stay updated on game activity.</div>
+    <button class="btn btn-primary btn-sm" onclick="requestNotifPermission()">ENABLE NOTIFICATIONS</button>
+  `;
+}
+
+async function requestNotifPermission() {
+  try {
+    const perm = await Notification.requestPermission();
+    if (perm === 'granted') {
+      showToast('Notifications enabled!');
+    } else {
+      showToast('Notification permission denied');
+    }
+    refreshNotifStatus();
+  } catch {
+    showToast('Could not request notification permission');
+  }
 }
 
 async function checkSession() {
