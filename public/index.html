@@ -476,6 +476,65 @@
       margin-top: 3px;
     }
 
+    /* ── CHAT ── */
+    .chat-panel {
+      display: flex;
+      flex-direction: column;
+      height: 100%;
+      padding: 0;
+    }
+    .chat-messages {
+      flex: 1;
+      overflow-y: auto;
+      -webkit-overflow-scrolling: touch;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      padding: 12px 16px 8px;
+    }
+    .chat-msg {
+      background: var(--surface);
+      border-radius: 10px;
+      padding: 8px 12px;
+      font-size: 13px;
+      animation: slide-in 0.2s ease;
+    }
+    .chat-msg-sender {
+      font-weight: 700;
+      color: var(--accent);
+      font-size: 11px;
+      margin-bottom: 2px;
+    }
+    .chat-msg.mine .chat-msg-sender { color: var(--accent3); }
+    .chat-msg-time { font-size: 10px; color: var(--muted); margin-top: 2px; }
+    .chat-input-row {
+      display: flex;
+      gap: 8px;
+      padding: 10px 12px;
+      border-top: 1px solid var(--border);
+      background: var(--bg);
+    }
+    .chat-input-row input {
+      flex: 1;
+      padding: 10px 14px;
+      border-radius: 22px;
+      border: 1.5px solid var(--border);
+      background: var(--surface);
+      color: var(--text);
+      font-size: 14px;
+    }
+    .tab-badge {
+      display: inline-block;
+      background: var(--accent2);
+      color: #fff;
+      border-radius: 8px;
+      font-size: 10px;
+      padding: 0 5px;
+      margin-left: 3px;
+      line-height: 15px;
+      vertical-align: middle;
+    }
+
     /* ── TOAST ── */
     #toast {
       position: fixed;
@@ -650,6 +709,75 @@
       transform: none !important;
     }
 
+    /* ── PROOF CELLS ── */
+    .bingo-cell.proof-cell { position: relative; }
+    .proof-icon {
+      position: absolute;
+      top: 2px; right: 3px;
+      font-size: 11px;
+      line-height: 1;
+      pointer-events: none;
+    }
+    .proof-toggle { font-size: 14px; padding: 2px 6px; opacity: 0.4; }
+    .proof-toggle.proof-on { opacity: 1; }
+
+    /* ── PHOTO PROOF MODAL ── */
+    #photo-proof-modal {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,0.88);
+      z-index: 620;
+      align-items: center;
+      justify-content: center;
+      padding: 24px;
+    }
+    #photo-proof-inner {
+      background: var(--surface);
+      border-radius: 16px;
+      padding: 24px;
+      width: 100%;
+      max-width: 360px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+    #photo-proof-preview {
+      width: 100%;
+      border-radius: 8px;
+      object-fit: cover;
+      max-height: 200px;
+    }
+
+    /* ── PHOTO LIGHTBOX ── */
+    #photo-lightbox {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,0.95);
+      z-index: 800;
+      align-items: center;
+      justify-content: center;
+      flex-direction: column;
+      gap: 12px;
+    }
+    #photo-lightbox.show { display: flex; }
+    #photo-lightbox img {
+      max-width: 95vw;
+      max-height: 80vh;
+      border-radius: 8px;
+      object-fit: contain;
+    }
+    /* Photo indicator on board view cells */
+    .bingo-cell.has-photo::after {
+      content: '📷';
+      position: absolute;
+      bottom: 2px; right: 3px;
+      font-size: 10px;
+      line-height: 1;
+      pointer-events: none;
+    }
+
     /* ── CONFIRM MODAL ── */
     #confirm-modal {
       display: none;
@@ -768,6 +896,7 @@
 
     .tab-panel { display: none; }
     .tab-panel.active { display: block; }
+    .tab-panel.chat-panel.active { display: flex; }
 
     /* ── JOINING SCREEN ── */
     #screen-join {
@@ -1004,7 +1133,7 @@
         </div>
         <div class="info-row" style="margin-top:8px;">
           <span>Version</span>
-          <strong>1.0</strong>
+          <strong>2.0</strong>
         </div>
       </div>
 
@@ -1096,7 +1225,7 @@
 <div id="screen-participant" class="screen">
   <div class="top-bar">
     <div style="display:flex;align-items:center;gap:6px;">
-      <button class="btn btn-ghost" onclick="goBackToHome()" style="padding:4px 6px;font-size:16px;">←</button>
+      <button class="btn btn-ghost" onclick="showLeaveConfirm()" style="padding:4px 6px;font-size:16px;">←</button>
       <span class="status-dot"></span>
       <span id="p-player-name" style="font-weight:700;font-size:15px;"></span>
     </div>
@@ -1111,6 +1240,7 @@
     <button class="tab active" onclick="switchTab(this,'p-tab-card')">MY CARD</button>
     <button class="tab" onclick="switchTab(this,'p-tab-players')">PLAYERS</button>
     <button class="tab" onclick="switchTab(this,'p-tab-feed')">FEED</button>
+    <button id="p-chat-tab-btn" class="tab" onclick="switchTab(this,'p-tab-chat');clearChatBadge('p')">CHAT</button>
     <button class="tab" style="color:var(--accent2);flex:0.6;" onclick="showLeaveConfirm()">LEAVE</button>
   </div>
 
@@ -1121,6 +1251,12 @@
   <div style="flex:1;overflow-y:auto;-webkit-overflow-scrolling:touch;">
     <!-- Card Tab -->
     <div id="p-tab-card" class="tab-panel active" style="padding:12px 8px 24px;">
+      <div id="p-waiting-banner" style="display:none;text-align:center;padding:12px 16px 8px;">
+        <div style="font-family:var(--font-display);font-size:18px;color:var(--muted);letter-spacing:0.1em;">
+          <span class="status-dot" style="background:var(--muted);"></span>WAITING FOR HOST TO START
+        </div>
+        <div style="font-size:12px;color:var(--muted);margin-top:4px;">Your card is ready. Sit tight!</div>
+      </div>
       <div class="bingo-wrapper">
         <div id="p-bingo-header" class="bingo-header"></div>
         <div id="p-bingo-grid" class="bingo-grid"></div>
@@ -1143,13 +1279,24 @@
       </div>
     </div>
   </div>
+
+  <!-- Chat Tab — outside scroll wrapper so input stays pinned at bottom -->
+  <div id="p-tab-chat" class="tab-panel chat-panel" style="flex:1;overflow:hidden;">
+    <div id="p-chat-messages" class="chat-messages">
+      <div class="empty-state">No messages yet. Say hi!</div>
+    </div>
+    <div class="chat-input-row">
+      <input id="p-chat-input" type="text" placeholder="Send a message..." maxlength="200" onkeydown="if(event.key==='Enter')sendChat('p')" />
+      <button class="btn btn-primary btn-sm" onclick="sendChat('p')" style="flex-shrink:0;">Send</button>
+    </div>
+  </div>
 </div>
 
 <!-- ──────────────────────── ARBITER DASHBOARD ──────────────────────── -->
 <div id="screen-arbiter" class="screen">
   <div class="top-bar">
     <div style="display:flex;align-items:center;gap:6px;">
-      <button class="btn btn-ghost" onclick="goBackToHome()" style="padding:4px 6px;font-size:16px;">←</button>
+      <button class="btn btn-ghost" onclick="showHostActions()" style="padding:4px 6px;font-size:16px;">←</button>
       <span class="status-dot"></span>
       <span id="a-arbiter-name" style="font-weight:700;font-size:15px;"></span>
     </div>
@@ -1164,6 +1311,7 @@
     <button class="tab active" onclick="switchTab(this,'a-tab-players')">PLAYERS</button>
     <button class="tab" onclick="switchTab(this,'a-tab-card')">MY CARD</button>
     <button class="tab" onclick="switchTab(this,'a-tab-feed')">FEED</button>
+    <button id="a-chat-tab-btn" class="tab" onclick="switchTab(this,'a-tab-chat');clearChatBadge('a')">CHAT</button>
     <button class="tab" onclick="switchTab(this,'a-tab-info')">INFO</button>
     <button class="tab" style="color:var(--accent2);flex:0.5;" onclick="showHostActions()">LEAVE</button>
   </div>
@@ -1175,6 +1323,7 @@
   <div style="flex:1;overflow-y:auto;-webkit-overflow-scrolling:touch;">
     <!-- Players Tab -->
     <div id="a-tab-players" class="tab-panel active" style="padding:16px;">
+      <div id="a-game-controls" style="margin-bottom:16px;"></div>
       <div class="section-header">PLAYERS (<span id="a-player-count">0</span>)</div>
       <div id="a-participants" class="participant-grid">
         <div class="empty-state">Share the room code — waiting for players to join!</div>
@@ -1230,13 +1379,36 @@
       </div>
     </div>
   </div>
+
+  <!-- Arbiter Chat Tab — outside scroll wrapper so input stays pinned at bottom -->
+  <div id="a-tab-chat" class="tab-panel chat-panel" style="flex:1;overflow:hidden;">
+    <div id="a-chat-messages" class="chat-messages">
+      <div class="empty-state">No messages yet. Say hi!</div>
+    </div>
+    <div class="chat-input-row">
+      <input id="a-chat-input" type="text" placeholder="Send a message..." maxlength="200" onkeydown="if(event.key==='Enter')sendChat('a')" />
+      <button class="btn btn-primary btn-sm" onclick="sendChat('a')" style="flex-shrink:0;">Send</button>
+    </div>
+  </div>
 </div>
 
 <!-- ──────────────────────── BINGO OVERLAY ──────────────────────── -->
 <div id="bingo-overlay">
+  <div id="bingo-place-emoji" style="font-size:clamp(40px,12vw,64px);line-height:1;"></div>
   <div class="bingo-big-text">PIngo!</div>
   <div class="bingo-overlay-name" id="bingo-overlay-name"></div>
   <button class="btn btn-secondary" onclick="closeBingoOverlay()" style="margin-top:16px;">Dismiss</button>
+</div>
+
+<!-- ──────────────────────── STANDINGS OVERLAY ──────────────────────── -->
+<div id="standings-overlay" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.92);z-index:510;flex-direction:column;align-items:center;justify-content:center;gap:16px;padding:24px;">
+  <div style="font-family:var(--font-display);font-size:clamp(48px,15vw,80px);color:var(--accent);text-shadow:0 0 40px rgba(232,255,71,0.3);letter-spacing:0.05em;">GAME OVER</div>
+  <div id="standings-list" style="width:100%;max-width:400px;display:flex;flex-direction:column;gap:8px;max-height:50vh;overflow-y:auto;"></div>
+  <div style="display:flex;gap:12px;flex-wrap:wrap;justify-content:center;margin-top:8px;">
+    <button id="standings-play-again" class="btn btn-primary" onclick="hostPlayAgain()" style="display:none;">🎲 PLAY AGAIN</button>
+    <button class="btn btn-secondary" onclick="closeStandingsAndLeave()">LEAVE PARTY</button>
+    <button class="btn btn-ghost" onclick="closeStandingsOverlay()">Stay &amp; Watch</button>
+  </div>
 </div>
 
 <!-- ──────────────────────── CONFIRM MODAL (LEAVE) ──────────────────────── -->
@@ -1259,6 +1431,29 @@
       <button class="btn btn-primary btn-sm" onclick="confirmCellCheck()">Confirm</button>
     </div>
   </div>
+</div>
+
+<!-- ──────────────────────── PHOTO PROOF MODAL ──────────────────────── -->
+<div id="photo-proof-modal">
+  <div id="photo-proof-inner">
+    <div style="font-family:var(--font-display);font-size:18px;letter-spacing:0.05em;">📷 PHOTO REQUIRED</div>
+    <div id="photo-proof-prompt" style="font-size:14px;color:var(--muted);line-height:1.4;"></div>
+    <img id="photo-proof-preview" alt="preview" style="display:none;" />
+    <label class="btn btn-secondary btn-sm" style="text-align:center;cursor:pointer;">
+      Choose Photo
+      <input id="photo-proof-input" type="file" accept="image/*" capture="environment" style="display:none;" onchange="onPhotoSelected(this)" />
+    </label>
+    <div class="confirm-btns">
+      <button class="btn btn-secondary btn-sm" onclick="cancelPhotoProof()">Cancel</button>
+      <button id="photo-proof-submit" class="btn btn-primary btn-sm" onclick="submitPhotoProof()" disabled>Submit</button>
+    </div>
+  </div>
+</div>
+
+<!-- ──────────────────────── PHOTO LIGHTBOX ──────────────────────── -->
+<div id="photo-lightbox" onclick="closePhotoLightbox()">
+  <img id="photo-lightbox-img" src="" alt="proof photo" />
+  <div style="color:rgba(255,255,255,0.5);font-size:13px;">Tap anywhere to close</div>
 </div>
 
 <!-- ──────────────────────── KICK CONFIRM MODAL ──────────────────────── -->
@@ -1341,16 +1536,28 @@ let myChecked = new Set();
 let gridSize = 5;
 let arbiterId = 'arbiter-' + Math.random().toString(36).substring(2, 9);
 let prompts = [];
+let proofRequiredSet = new Set(); // setup screen: which prompts require photo proof
+let roomProofRequired = new Set(); // game screen: prompt texts requiring photo proof
 let activityLog = [];
 let arbiterCard = [];
 let arbiterChecked = new Set();
 let isCurrentlyArbiter = false;
 let currentParticipants = [];
+let gameState = 'waiting'; // 'waiting' | 'active' | 'ended'
 
 // ── UTILS ──
 function showScreen(id) {
   document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
   document.getElementById(id).classList.add('active');
+}
+
+function esc(str) {
+  return String(str ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
 }
 
 function showToast(msg, duration = 3000) {
@@ -1388,10 +1595,43 @@ function initSocket() {
   });
   socket.on('bingo', (data) => {
     addActivity(data.message, true);
-    showBingoOverlay(data.participantName);
+    showBingoOverlay(data.participantName, data.place, data.placeEmoji);
   });
   socket.on('room:update', (data) => {
     updateParticipantDisplays(data.participants);
+  });
+  socket.on('game:started', (data) => {
+    gameState = data.state || 'active';
+    updateWaitingBanner();
+    updateArbiterGameControls();
+    showToast('Game started! Good luck!');
+  });
+  socket.on('game:over', (data) => {
+    gameState = 'ended';
+    updateArbiterGameControls();
+    showStandingsOverlay(data.standings);
+  });
+  socket.on('chat:received', (data) => {
+    chatLog.push(data);
+    renderChat();
+    // Show unread badge if chat tab is not currently active
+    ['p', 'a'].forEach(prefix => {
+      const panel = document.getElementById(`${prefix}-tab-chat`);
+      if (panel && !panel.classList.contains('active')) {
+        showChatBadge(prefix);
+      }
+    });
+  });
+  socket.on('photo:data', (data) => {
+    boardViewPhotos = data.photos || {};
+    // Re-apply has-photo class if board is still open
+    const grid = document.getElementById('player-board-bingo-grid');
+    if (grid) {
+      Object.keys(boardViewPhotos).forEach(idx => {
+        const cell = grid.querySelector(`[data-photo-index="${idx}"]`);
+        if (cell) cell.classList.add('has-photo');
+      });
+    }
   });
   socket.on('kicked', () => {
     showToast('You have been kicked from the party');
@@ -1424,6 +1664,10 @@ function resetAndGoHome() {
   arbiterChecked = new Set();
   isCurrentlyArbiter = false;
   currentParticipants = [];
+  gameState = 'waiting';
+  roomProofRequired = new Set();
+  chatLog = [];
+  chatUnread = { p: 0, a: 0 };
   if (socket) {
     socket.disconnect();
     socket = null;
@@ -1457,7 +1701,16 @@ function addPrompt() {
 }
 
 function removePrompt(idx) {
-  prompts.splice(idx, 1);
+  const removed = prompts.splice(idx, 1)[0];
+  proofRequiredSet.delete(removed);
+  renderPromptList();
+}
+
+function toggleProofRequired(idx) {
+  const p = prompts[idx];
+  if (!p) return;
+  if (proofRequiredSet.has(p)) proofRequiredSet.delete(p);
+  else proofRequiredSet.add(p);
   renderPromptList();
 }
 
@@ -1471,7 +1724,8 @@ function renderPromptList() {
   list.innerHTML = prompts.map((p, i) => `
     <div class="prompt-item">
       <span class="prompt-num">${i+1}</span>
-      <span>${p}</span>
+      <span>${esc(p)}</span>
+      <button class="btn btn-ghost proof-toggle ${proofRequiredSet.has(p) ? 'proof-on' : ''}" onclick="toggleProofRequired(${i})" title="Require photo proof">📷</button>
       <button class="prompt-del" onclick="removePrompt(${i})">✕</button>
     </div>
   `).join('');
@@ -1491,6 +1745,7 @@ async function createRoom() {
 
   const body = {
     password, gridSize: sz, prompts,
+    proofRequired: [...proofRequiredSet],
     arbiterId, arbiterName: name,
     username: loggedInUser,
     partyName
@@ -1519,6 +1774,8 @@ async function createRoom() {
 
 function setupArbiterDashboard(name, roomData) {
   isCurrentlyArbiter = true;
+  gameState = roomData.gameState || 'waiting';
+  roomProofRequired = new Set(roomData.proofRequired || []);
   document.getElementById('a-arbiter-name').textContent = name;
   document.getElementById('a-room-code').textContent = roomData.roomCode;
   document.getElementById('a-party-name').textContent = roomData.partyName || '';
@@ -1535,7 +1792,7 @@ function setupArbiterDashboard(name, roomData) {
 
   // Info prompts
   document.getElementById('info-prompts').innerHTML = roomData.prompts.map((p, i) =>
-    `<div class="prompt-item"><span class="prompt-num">${i+1}</span><span>${p}</span></div>`
+    `<div class="prompt-item"><span class="prompt-num">${i+1}</span><span>${esc(p)}</span></div>`
   ).join('');
 
   // participants is now an array from getAllPlayers (includes host)
@@ -1543,6 +1800,16 @@ function setupArbiterDashboard(name, roomData) {
     ? roomData.participants
     : Object.values(roomData.participants || {});
   updateParticipantDisplays(players);
+  updateArbiterGameControls();
+
+  socket.off('card:reset');
+  socket.on('card:reset', (data) => {
+    arbiterCard = data.card;
+    arbiterChecked = new Set(data.checked);
+    gridSize = data.gridSize;
+    renderBingoHeader('a-bingo-header', gridSize);
+    renderBingoGrid('a-bingo-grid', arbiterCard, arbiterChecked, gridSize, true);
+  });
 
   showPushBannerIfNeeded();
 
@@ -1588,8 +1855,10 @@ function renderBingoGrid(gridId, card, checked, size, isArbiter) {
   grid.innerHTML = card.map((text, i) => {
     const isFree = text === 'FREE';
     const isChecked = checked.has(i);
-    const classes = ['bingo-cell', isFree ? 'free' : '', isChecked ? 'checked' : ''].filter(Boolean).join(' ');
-    return `<div class="${classes}" data-index="${i}" data-arbiter="${isArbiter}"><span class="bingo-cell-text">${text}</span></div>`;
+    const needsProof = !isFree && roomProofRequired.has(text);
+    const classes = ['bingo-cell', isFree ? 'free' : '', isChecked ? 'checked' : '', needsProof ? 'proof-cell' : ''].filter(Boolean).join(' ');
+    const proofIcon = needsProof ? '<span class="proof-icon">📷</span>' : '';
+    return `<div class="${classes}" data-index="${i}" data-arbiter="${isArbiter}">${proofIcon}<span class="bingo-cell-text">${esc(text)}</span></div>`;
   }).join('');
 
   // Use pointer events for reliable mobile tap handling
@@ -1605,10 +1874,22 @@ let pendingCellIndex = null;
 
 function toggleCell(index, isArbiter) {
   if (!socket || !currentRoom) return;
+  if (gameState !== 'active') return showToast('Waiting for the host to start the game.');
   const card = isArbiter ? arbiterCard : myCard;
   const checked = isArbiter ? arbiterChecked : myChecked;
   const promptText = card[index] || '';
   const isChecked = checked.has(index);
+
+  // If cell requires photo proof and not yet checked → open photo modal
+  if (!isChecked && roomProofRequired.has(promptText)) {
+    pendingCellIndex = index;
+    document.getElementById('photo-proof-prompt').textContent = promptText;
+    document.getElementById('photo-proof-preview').src = '';
+    document.getElementById('photo-proof-preview').style.display = 'none';
+    document.getElementById('photo-proof-input').value = '';
+    document.getElementById('photo-proof-modal').style.display = 'flex';
+    return;
+  }
 
   pendingCellIndex = index;
   document.getElementById('cell-confirm-text').textContent =
@@ -1627,6 +1908,67 @@ function confirmCellCheck() {
 function cancelCellConfirm() {
   document.getElementById('cell-confirm-modal').style.display = 'none';
   pendingCellIndex = null;
+}
+
+// ── PHOTO PROOF ──
+let pendingPhotoData = null;
+
+function onPhotoSelected(input) {
+  const file = input.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = (e) => {
+    const img = new Image();
+    img.onload = () => {
+      const maxW = 800;
+      const scale = img.width > maxW ? maxW / img.width : 1;
+      const canvas = document.createElement('canvas');
+      canvas.width = Math.round(img.width * scale);
+      canvas.height = Math.round(img.height * scale);
+      canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height);
+      const base64 = canvas.toDataURL('image/jpeg', 0.8);
+      // Reject if still too large (~500KB unencoded → ~680KB base64)
+      if (base64.length > 700000) {
+        showToast('Photo is too large even after resize. Try a different image.');
+        return;
+      }
+      pendingPhotoData = base64;
+      const preview = document.getElementById('photo-proof-preview');
+      preview.src = base64;
+      preview.style.display = 'block';
+      document.getElementById('photo-proof-submit').disabled = false;
+    };
+    img.src = e.target.result;
+  };
+  reader.readAsDataURL(file);
+}
+
+function submitPhotoProof() {
+  if (pendingCellIndex === null || !pendingPhotoData || !socket || !currentRoom) return;
+  socket.emit('task:photo', {
+    roomCode: currentRoom,
+    cellIndex: pendingCellIndex,
+    imageData: pendingPhotoData
+  });
+  pendingPhotoData = null;
+  pendingCellIndex = null;
+  document.getElementById('photo-proof-modal').style.display = 'none';
+}
+
+function cancelPhotoProof() {
+  pendingPhotoData = null;
+  pendingCellIndex = null;
+  document.getElementById('photo-proof-modal').style.display = 'none';
+}
+
+function openPhotoLightbox(src) {
+  document.getElementById('photo-lightbox-img').src = src;
+  document.getElementById('photo-lightbox').classList.add('show');
+}
+
+function closePhotoLightbox() {
+  document.getElementById('photo-lightbox').classList.remove('show');
+  document.getElementById('photo-lightbox-img').src = '';
 }
 
 // ── PARTICIPANTS ──
@@ -1655,12 +1997,16 @@ function renderParticipants(containerId, participants, total, isArbiterView) {
     const isMe = p.id === loggedInUser;
     const hostTag = p.isHost ? '<span style="font-size:11px;color:var(--accent3);font-weight:700;letter-spacing:0.05em;">[HOST]</span> ' : '';
     const kickBtn = isArbiterView && !p.isHost && !isMe
-      ? `<button class="btn btn-ghost" style="color:var(--accent2);font-size:11px;padding:2px 8px;margin-top:2px;" onclick="event.stopPropagation(); kickPlayer('${p.id}')">KICK</button>`
+      ? `<button class="btn btn-ghost" style="color:var(--accent2);font-size:11px;padding:2px 8px;margin-top:2px;" onclick="event.stopPropagation(); kickPlayer(${JSON.stringify(p.id)})">KICK</button>`
       : '';
+    const placeEmojis = ['🥇','🥈','🥉'];
+    const placeLabel = p.place
+      ? (placeEmojis[p.place - 1] || `${p.place}th`) + ' Place'
+      : null;
     return `
-      <div class="participant-card ${p.hasBingo ? 'has-bingo' : ''}" onclick="viewPlayerBoard('${p.id}')">
-        <div class="participant-name">${isMe ? '⭐ ' : ''}${hostTag}${p.name}</div>
-        ${p.hasBingo ? '<div class="bingo-tag">🎉 PIngo!</div>' : `
+      <div class="participant-card ${p.hasBingo ? 'has-bingo' : ''}" onclick="viewPlayerBoard(${JSON.stringify(p.id)})">
+        <div class="participant-name">${isMe ? '⭐ ' : ''}${hostTag}${esc(p.name)}</div>
+        ${p.hasBingo ? `<div class="bingo-tag">${placeLabel ? placeLabel : '🎉 PIngo!'}</div>` : `
           <div class="participant-progress">
             <div class="participant-progress-bar" style="width:${pct}%"></div>
           </div>
@@ -1688,7 +2034,7 @@ function renderFeed(containerId) {
   }
   el.innerHTML = activityLog.slice(0, 50).map(item => `
     <div class="activity-item ${item.isBingo ? 'bingo-event' : ''}">
-      ${item.message}
+      ${esc(item.message)}
       <div class="activity-time">${formatTime(item.time)}</div>
     </div>
   `).join('');
@@ -1698,9 +2044,65 @@ function formatTime(date) {
   return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 }
 
+// ── CHAT ──
+let chatLog = [];
+let chatUnread = { p: 0, a: 0 };
+
+function sendChat(prefix) {
+  const input = document.getElementById(`${prefix}-chat-input`);
+  const msg = input.value.trim();
+  if (!msg || !socket || !currentRoom) return;
+  socket.emit('chat:message', { roomCode: currentRoom, message: msg });
+  input.value = '';
+}
+
+function renderChat() {
+  ['p', 'a'].forEach(prefix => {
+    const el = document.getElementById(`${prefix}-chat-messages`);
+    if (!el) return;
+    if (chatLog.length === 0) {
+      el.innerHTML = '<div class="empty-state">No messages yet. Say hi!</div>';
+      return;
+    }
+    el.innerHTML = chatLog.map(item => {
+      const isMe = item.senderName === loggedInUser;
+      return `
+        <div class="chat-msg ${isMe ? 'mine' : ''}">
+          <div class="chat-msg-sender">${esc(item.senderName)}</div>
+          <div>${esc(item.message)}</div>
+          <div class="chat-msg-time">${formatTime(new Date(item.time))}</div>
+        </div>
+      `;
+    }).join('');
+    el.scrollTop = el.scrollHeight;
+  });
+}
+
+function showChatBadge(prefix) {
+  chatUnread[prefix]++;
+  const btn = document.getElementById(`${prefix}-chat-tab-btn`);
+  if (!btn) return;
+  let badge = btn.querySelector('.tab-badge');
+  if (!badge) {
+    badge = document.createElement('span');
+    badge.className = 'tab-badge';
+    btn.appendChild(badge);
+  }
+  badge.textContent = chatUnread[prefix];
+}
+
+function clearChatBadge(prefix) {
+  chatUnread[prefix] = 0;
+  const btn = document.getElementById(`${prefix}-chat-tab-btn`);
+  if (!btn) return;
+  const badge = btn.querySelector('.tab-badge');
+  if (badge) badge.remove();
+}
+
 // ── BINGO OVERLAY ──
-function showBingoOverlay(name) {
-  document.getElementById('bingo-overlay-name').textContent = name + ' got PIngo!';
+function showBingoOverlay(name, place, placeEmoji) {
+  document.getElementById('bingo-place-emoji').textContent = placeEmoji || '';
+  document.getElementById('bingo-overlay-name').textContent = name + ' got PIngo!' + (place ? ` (${placeEmoji || place} Place)` : '');
   document.getElementById('bingo-overlay').classList.add('show');
   spawnConfetti();
   setTimeout(closeBingoOverlay, 4000);
@@ -1708,6 +2110,80 @@ function showBingoOverlay(name) {
 
 function closeBingoOverlay() {
   document.getElementById('bingo-overlay').classList.remove('show');
+}
+
+// ── GAME STATE CONTROLS ──
+function updateWaitingBanner() {
+  const banner = document.getElementById('p-waiting-banner');
+  if (banner) banner.style.display = (gameState === 'waiting') ? 'block' : 'none';
+}
+
+function updateArbiterGameControls() {
+  const el = document.getElementById('a-game-controls');
+  if (!el) return;
+  if (gameState === 'waiting') {
+    el.innerHTML = `<button class="btn btn-primary" onclick="hostStartGame()" style="width:100%;font-size:20px;">🎲 START GAME</button>`;
+  } else if (gameState === 'active') {
+    el.innerHTML = `<button class="btn btn-danger btn-sm" onclick="hostEndGame()" style="width:100%;">END GAME</button>`;
+  } else {
+    el.innerHTML = '';
+  }
+}
+
+function hostStartGame() {
+  if (!socket || !currentRoom) return;
+  socket.emit('game:start', { roomCode: currentRoom });
+}
+
+function hostEndGame() {
+  if (!socket || !currentRoom) return;
+  socket.emit('game:end', { roomCode: currentRoom });
+}
+
+function hostPlayAgain() {
+  if (!socket || !currentRoom) return;
+  closeStandingsOverlay();
+  socket.emit('game:reset', { roomCode: currentRoom });
+}
+
+// ── STANDINGS OVERLAY ──
+const PLACE_LABELS = ['🥇 1st', '🥈 2nd', '🥉 3rd', '4th', '5th', '6th', '7th', '8th'];
+
+function showStandingsOverlay(standings) {
+  spawnConfetti();
+  const list = document.getElementById('standings-list');
+  list.innerHTML = standings.map((p, i) => {
+    const placeLabel = p.place ? (PLACE_LABELS[p.place - 1] || `${p.place}th`) : '—';
+    const freeOffset = (gridSize % 2 === 1) ? 1 : 0;
+    const effectiveTotal = gridSize * gridSize - freeOffset;
+    const effectiveChecked = Math.max(0, (p.checkedCount || 0) - freeOffset);
+    const highlight = p.place === 1 ? 'border-color:var(--accent);background:rgba(232,255,71,0.06);' : '';
+    return `
+      <div style="background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:12px 16px;display:flex;justify-content:space-between;align-items:center;${highlight}">
+        <div>
+          <span style="font-family:var(--font-display);font-size:18px;color:var(--accent);">${placeLabel}</span>
+          ${p.hasBingo ? '<span style="font-size:12px;color:var(--bingo);margin-left:6px;">PIngo!</span>' : ''}
+          <div style="font-size:14px;font-weight:700;margin-top:2px;">${esc(p.name)}</div>
+        </div>
+        <div style="font-size:13px;color:var(--muted);text-align:right;">${effectiveChecked}/${effectiveTotal} done</div>
+      </div>
+    `;
+  }).join('');
+
+  const playAgainBtn = document.getElementById('standings-play-again');
+  if (playAgainBtn) playAgainBtn.style.display = isCurrentlyArbiter ? 'block' : 'none';
+
+  document.getElementById('standings-overlay').style.display = 'flex';
+}
+
+function closeStandingsOverlay() {
+  document.getElementById('standings-overlay').style.display = 'none';
+}
+
+function closeStandingsAndLeave() {
+  closeStandingsOverlay();
+  if (isCurrentlyArbiter) showHostActions();
+  else showLeaveConfirm();
 }
 
 function spawnConfetti() {
@@ -1774,10 +2250,10 @@ async function loadLobby() {
       const safePartyName = (r.partyName || '').replace(/'/g, "\\'");
       if (alreadyJoined) {
         return `
-          <div class="lobby-card already-joined" onclick="rejoinFromLobby('${r.roomCode}', ${isHost})">
+          <div class="lobby-card already-joined" onclick="rejoinFromLobby(${JSON.stringify(r.roomCode)}, ${isHost})">
             <div>
-              <div class="lobby-card-name">${r.partyName || 'Unnamed Party'}</div>
-              <div class="lobby-card-info">Hosted by ${r.hostName}</div>
+              <div class="lobby-card-name">${esc(r.partyName || 'Unnamed Party')}</div>
+              <div class="lobby-card-info">Hosted by ${esc(r.hostName)}</div>
               <div class="already-joined-badge">ALREADY JOINED</div>
             </div>
             <div style="display:flex;flex-direction:column;align-items:flex-end;gap:4px;">
@@ -1788,10 +2264,10 @@ async function loadLobby() {
         `;
       }
       return `
-        <div class="lobby-card" onclick="promptLobbyJoin('${r.roomCode}', '${safePartyName}')">
+        <div class="lobby-card" onclick="promptLobbyJoin(${JSON.stringify(r.roomCode)}, ${JSON.stringify(r.partyName || '')})">
           <div>
-            <div class="lobby-card-name">${r.partyName || 'Unnamed Party'}</div>
-            <div class="lobby-card-info">Hosted by ${r.hostName}</div>
+            <div class="lobby-card-name">${esc(r.partyName || 'Unnamed Party')}</div>
+            <div class="lobby-card-info">Hosted by ${esc(r.hostName)}</div>
           </div>
           <div class="lobby-card-players">${r.participantCount} player${r.participantCount !== 1 ? 's' : ''}</div>
         </div>
@@ -2118,6 +2594,8 @@ function handleParticipantJoined(data) {
   myCard = data.card;
   myChecked = new Set(data.checked);
   gridSize = data.gridSize;
+  gameState = data.gameState || 'waiting';
+  roomProofRequired = new Set(data.proofRequired || []);
 
   document.getElementById('p-player-name').textContent = loggedInUser;
   document.getElementById('p-room-code').textContent = data.roomCode;
@@ -2125,6 +2603,7 @@ function handleParticipantJoined(data) {
 
   renderBingoHeader('p-bingo-header', gridSize);
   renderBingoGrid('p-bingo-grid', myCard, myChecked, gridSize, false);
+  updateWaitingBanner();
 
   showPushBannerIfNeeded();
 
@@ -2133,6 +2612,15 @@ function handleParticipantJoined(data) {
     myChecked = new Set(upd.checked);
     renderBingoGrid('p-bingo-grid', myCard, myChecked, gridSize, false);
     if (upd.hasBingo) showToast('🎉 PIngo! You did it!');
+  });
+
+  socket.off('card:reset');
+  socket.on('card:reset', (data) => {
+    myCard = data.card;
+    myChecked = new Set(data.checked);
+    gridSize = data.gridSize;
+    renderBingoHeader('p-bingo-header', gridSize);
+    renderBingoGrid('p-bingo-grid', myCard, myChecked, gridSize, false);
   });
 
   showScreen('screen-participant');
@@ -2193,8 +2681,8 @@ function showTransferModal() {
     list.innerHTML = '<div class="empty-state">No other players to transfer to.</div>';
   } else {
     list.innerHTML = nonHostPlayers.map(p => `
-      <button class="btn btn-secondary btn-sm" style="text-align:left;" onclick="confirmTransfer('${p.id}', '${p.name}')">
-        ${p.name}
+      <button class="btn btn-secondary btn-sm" style="text-align:left;" onclick="confirmTransfer(${JSON.stringify(p.id)}, ${JSON.stringify(p.name)})">
+        ${esc(p.name)}
       </button>
     `).join('');
   }
@@ -2271,9 +2759,13 @@ function cancelKick() {
 }
 
 // ── PLAYER BOARD VIEW ──
+let boardViewPhotos = {}; // photos for the currently open board view
+
 function viewPlayerBoard(playerId) {
   const player = currentParticipants.find(p => p.id === playerId);
   if (!player || !player.card || player.card.length === 0) return;
+
+  boardViewPhotos = {};
 
   const freeOffset = (gridSize % 2 === 1) ? 1 : 0;
   const effectiveTotal = gridSize * gridSize - freeOffset;
@@ -2287,22 +2779,37 @@ function viewPlayerBoard(playerId) {
 
   renderBingoHeader('player-board-bingo-header', gridSize);
 
+  const photoKeys = new Set(player.photoKeys || []);
   const grid = document.getElementById('player-board-bingo-grid');
   grid.style.gridTemplateColumns = `repeat(${gridSize}, 1fr)`;
   const checkedSet = new Set(player.checked);
   grid.innerHTML = player.card.map((text, i) => {
     const isFree = text === 'FREE';
     const isChecked = checkedSet.has(i);
-    const classes = ['bingo-cell', isFree ? 'free' : '', isChecked ? 'checked' : ''].filter(Boolean).join(' ');
-    return `<div class="${classes}"><span class="bingo-cell-text">${text}</span></div>`;
+    const hasPhoto = photoKeys.has(i);
+    const classes = ['bingo-cell', isFree ? 'free' : '', isChecked ? 'checked' : '', hasPhoto ? 'has-photo' : ''].filter(Boolean).join(' ');
+    return `<div class="${classes}" data-photo-index="${i}"><span class="bingo-cell-text">${esc(text)}</span></div>`;
   }).join('');
-  // No pointer event handlers — grid has readonly class
+
+  // Request actual photos from server to enable lightbox
+  if (photoKeys.size > 0 && socket && currentRoom) {
+    socket.emit('photo:request', { roomCode: currentRoom, targetId: playerId });
+  }
+
+  // Click handler for photo cells
+  grid.onpointerup = (e) => {
+    const cell = e.target.closest('.bingo-cell.has-photo');
+    if (!cell) return;
+    const idx = parseInt(cell.dataset.photoIndex);
+    if (boardViewPhotos[idx]) openPhotoLightbox(boardViewPhotos[idx]);
+  };
 
   document.getElementById('player-board-modal').classList.add('show');
 }
 
 function closePlayerBoardModal() {
   document.getElementById('player-board-modal').classList.remove('show');
+  boardViewPhotos = {};
 }
 
 // ── MY PARTIES ──
@@ -2330,10 +2837,10 @@ async function loadMyParties() {
         ? '<span style="font-size:11px;font-weight:700;color:var(--accent3);letter-spacing:0.05em;background:rgba(71,212,255,0.1);padding:2px 8px;border-radius:6px;">[HOST]</span>'
         : '<span style="font-size:11px;font-weight:700;color:var(--accent);letter-spacing:0.05em;background:rgba(232,255,71,0.1);padding:2px 8px;border-radius:6px;">[PLAYER]</span>';
       return `
-        <div class="lobby-card" onclick="rejoinFromMyParties('${r.roomCode}', ${r.role === 'host'})">
+        <div class="lobby-card" onclick="rejoinFromMyParties(${JSON.stringify(r.roomCode)}, ${r.role === 'host'})">
           <div>
-            <div class="lobby-card-name">${r.partyName}</div>
-            <div class="lobby-card-info">${roleBadge} Hosted by ${r.hostName}</div>
+            <div class="lobby-card-name">${esc(r.partyName)}</div>
+            <div class="lobby-card-info">${roleBadge} Hosted by ${esc(r.hostName)}</div>
           </div>
           <div style="display:flex;flex-direction:column;align-items:flex-end;gap:4px;">
             <div class="lobby-card-players">${r.playerCount} player${r.playerCount !== 1 ? 's' : ''}</div>

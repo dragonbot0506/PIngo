@@ -180,8 +180,73 @@ function sanitizeParticipants(participants) {
             name: p.name,
             checked: p.checked,
             card: p.card,
-            hasBingo: p.hasBingo
+            hasBingo: p.hasBingo,
+            place: p.place || null,
+            photoKeys: Object.keys(p.photos || {}).map(Number)
         }));
+}
+
+// Transfers host role to the first available participant, or deletes room if none remain.
+function autoTransferHost(room, roomCode, oldHostName) {
+    const nextParticipant = Object.values(room.participants).find(p => !p.kicked);
+
+    if (!nextParticipant) {
+        // No players left — delete the room
+        io.to(roomCode).emit('room:deleted');
+        for (const pId of Object.keys(room.participants)) {
+            if (users[pId]) users[pId].activeRoom = null;
+        }
+        delete rooms[roomCode];
+        return;
+    }
+
+    // Promote nextParticipant to arbiter
+    room.arbiter = {
+        id: nextParticipant.id,
+        name: nextParticipant.name,
+        username: nextParticipant.id,
+        socketId: nextParticipant.socketId,
+        pushSubscription: nextParticipant.pushSubscription,
+        card: nextParticipant.card,
+        checked: nextParticipant.checked,
+        hasBingo: nextParticipant.hasBingo
+    };
+    delete room.participants[nextParticipant.id];
+
+    if (users[nextParticipant.id]) {
+        users[nextParticipant.id].activeRoom = { roomCode, isArbiter: true };
+    }
+    if (nextParticipant.socketId) {
+        socketToUser[nextParticipant.socketId] = { username: nextParticipant.id, roomCode };
+    }
+
+    // Notify the new host to switch to arbiter UI
+    if (nextParticipant.socketId) {
+        const newHostSocket = io.sockets.sockets.get(nextParticipant.socketId);
+        if (newHostSocket) {
+            newHostSocket.emit('role:changed', {
+                newRole: 'arbiter',
+                data: {
+                    roomCode,
+                    gridSize: room.gridSize,
+                    prompts: room.prompts,
+                    proofRequired: room.proofRequired || [],
+                    partyName: room.partyName,
+                    participants: getAllPlayers(room),
+                    arbiterCard: room.arbiter.card,
+                    arbiterChecked: room.arbiter.checked,
+                    gameState: room.state || 'waiting'
+                }
+            });
+        }
+    }
+
+    const msg = oldHostName
+        ? `${oldHostName} left. ${nextParticipant.name} is now the host.`
+        : `${nextParticipant.name} is now the host.`;
+
+    io.to(roomCode).emit('room:update', { participants: getAllPlayers(room) });
+    io.to(roomCode).emit('activity', { message: msg, participantName: nextParticipant.name });
 }
 
 function getAllPlayers(room) {
@@ -193,6 +258,8 @@ function getAllPlayers(room) {
             checked: room.arbiter.checked || [],
             card: room.arbiter.card || [],
             hasBingo: room.arbiter.hasBingo || false,
+            place: room.arbiter.place || null,
+            photoKeys: Object.keys(room.arbiter.photos || {}).map(Number),
             isHost: true
         });
     }
@@ -244,6 +311,7 @@ app.post('/api/rooms', (req, res) => {
             password,
             gridSize,
             prompts,
+            proofRequired,
             arbiterId,
             arbiterName,
             username,
@@ -285,6 +353,9 @@ app.post('/api/rooms', (req, res) => {
             password,
             gridSize: parsedGridSize,
             prompts: prompts.slice(0, parsedGridSize * parsedGridSize),
+            proofRequired: Array.isArray(proofRequired)
+                ? proofRequired.filter(s => typeof s === 'string').slice(0, 100)
+                : [],
             partyName: partyName || 'Unnamed Party',
             participants: {},
             arbiter: {
@@ -295,9 +366,13 @@ app.post('/api/rooms', (req, res) => {
                 pushSubscription: null,
                 card: null,
                 checked: [],
-                hasBingo: false
+                hasBingo: false,
+                place: null
             },
-            createdAt: Date.now()
+            state: 'waiting',
+            placementCounter: 0,
+            createdAt: Date.now(),
+            lastActivity: Date.now()
         };
 
         console.log('ROOM CREATED:', roomCode);
@@ -408,7 +483,9 @@ app.post('/api/leave-room', (req, res) => {
 
     if (room) {
         if (isArbiter) {
+            const oldHostName = room.arbiter?.name;
             room.arbiter = null;
+            autoTransferHost(room, roomCode, oldHostName);
         } else if (room.participants[username]) {
             const name = room.participants[username].name;
             // Keep participant data for state persistence — only clear socket
@@ -504,10 +581,12 @@ io.on('connection', (socket) => {
                 roomCode: code,
                 gridSize: room.gridSize,
                 prompts: room.prompts,
+                proofRequired: room.proofRequired || [],
                 partyName: room.partyName,
                 participants: getAllPlayers(room),
                 arbiterCard: room.arbiter.card,
-                arbiterChecked: room.arbiter.checked
+                arbiterChecked: room.arbiter.checked,
+                gameState: room.state || 'waiting'
             });
         } catch (err) {
             console.error('arbiter:join error:', err);
@@ -525,14 +604,20 @@ io.on('connection', (socket) => {
 
             const participantKey = username || socket.id;
 
+            // Block brand-new joins once game has started (existing participants can still rejoin)
+            if (room.state !== 'waiting' && !room.participants[participantKey] &&
+                !(room.arbiter && room.arbiter.username === participantKey)) {
+                return socket.emit('error', 'Game already started. Ask the host to let you in next round.');
+            }
+
             // If this user already has a card in this room, rejoin with existing state
             if (room.participants[participantKey]) {
                 const existing = room.participants[participantKey];
-                existing.socketId = socket.id;
-                // Restore kicked players with their full state
+                // Kicked players may not re-enter
                 if (existing.kicked) {
-                    existing.kicked = false;
+                    return socket.emit('error', 'You have been removed from this party');
                 }
+                existing.socketId = socket.id;
                 socketToUser[socket.id] = { username: participantKey, roomCode: code };
 
                 if (username && users[username]) {
@@ -546,7 +631,9 @@ io.on('connection', (socket) => {
                     checked: existing.checked,
                     gridSize: room.gridSize,
                     roomCode: code,
-                    partyName: room.partyName
+                    partyName: room.partyName,
+                    proofRequired: room.proofRequired || [],
+                    gameState: room.state || 'waiting'
                 });
 
                 io.to(code).emit('room:update', {
@@ -573,8 +660,11 @@ io.on('connection', (socket) => {
                 pushSubscription: null,
                 card,
                 checked: [...checked],
-                hasBingo: false
+                hasBingo: false,
+                place: null,
+                photos: {}
             };
+            room.lastActivity = Date.now();
 
             socketToUser[socket.id] = { username: participantKey, roomCode: code };
 
@@ -590,12 +680,16 @@ io.on('connection', (socket) => {
                 checked: [...checked],
                 gridSize: room.gridSize,
                 roomCode: code,
-                partyName: room.partyName
+                partyName: room.partyName,
+                gameState: room.state || 'waiting'
             });
 
             io.to(code).emit('room:update', {
                 participants: getAllPlayers(room)
             });
+
+            const joinName = name || 'Someone';
+            sendPushToAll(room, 'New Player Joined!', `${joinName} joined ${room.partyName}`, participantKey, 'join');
         } catch (err) {
             console.error('participant:join error:', err);
             socket.emit('error', 'Failed to join room');
@@ -620,7 +714,8 @@ io.on('connection', (socket) => {
                     partyName: room.partyName,
                     participants: getAllPlayers(room),
                     arbiterCard: room.arbiter.card,
-                    arbiterChecked: room.arbiter.checked
+                    arbiterChecked: room.arbiter.checked,
+                    gameState: room.state || 'waiting'
                 });
             } else {
                 const participant = room.participants[username];
@@ -634,7 +729,9 @@ io.on('connection', (socket) => {
                     checked: participant.checked,
                     gridSize: room.gridSize,
                     roomCode: code,
-                    partyName: room.partyName
+                    partyName: room.partyName,
+                    proofRequired: room.proofRequired || [],
+                    gameState: room.state || 'waiting'
                 });
 
                 io.to(code).emit('room:update', {
@@ -678,6 +775,7 @@ io.on('connection', (socket) => {
             else checkedSet.add(cellIndex);
 
             participant.checked = [...checkedSet];
+            room.lastActivity = Date.now();
 
             const promptText = participant.card[cellIndex];
             const hadBingo = participant.hasBingo;
@@ -701,11 +799,17 @@ io.on('connection', (socket) => {
             }
 
             if (!hadBingo && participant.hasBingo) {
-                const bingoMsg = `${participant.name} got PIngo!`;
+                room.placementCounter = (room.placementCounter || 0) + 1;
+                participant.place = room.placementCounter;
+
+                const placeEmoji = ['🥇','🥈','🥉'][participant.place - 1] || (participant.place + 'th');
+                const bingoMsg = `${placeEmoji} ${participant.name} got PIngo!`;
 
                 io.to(code).emit('bingo', {
                     participantName: participant.name,
-                    message: bingoMsg
+                    message: bingoMsg,
+                    place: participant.place,
+                    placeEmoji
                 });
 
                 sendPushToAll(room, 'PIngo!', bingoMsg, userInfo.username, 'bingo');
@@ -717,6 +821,236 @@ io.on('connection', (socket) => {
             });
         } catch (err) {
             console.error('cell:check error:', err);
+        }
+    });
+
+    socket.on('game:start', ({ roomCode }) => {
+        try {
+            const code = String(roomCode || '').toUpperCase();
+            const room = rooms[code];
+            if (!room) return;
+            if (!room.arbiter || room.arbiter.socketId !== socket.id) {
+                return socket.emit('error', 'Only the host can start the game');
+            }
+            if (room.state !== 'waiting') return;
+
+            room.state = 'active';
+            io.to(code).emit('game:started', { state: 'active' });
+            io.to(code).emit('activity', { message: 'The game has started! Good luck everyone!' });
+            sendPushToAll(room, 'Game Started! 🎲', 'The host has started the game. Good luck!', null, 'game');
+        } catch (err) {
+            console.error('game:start error:', err);
+        }
+    });
+
+    socket.on('game:end', ({ roomCode }) => {
+        try {
+            const code = String(roomCode || '').toUpperCase();
+            const room = rooms[code];
+            if (!room) return;
+            if (!room.arbiter || room.arbiter.socketId !== socket.id) {
+                return socket.emit('error', 'Only the host can end the game');
+            }
+            if (room.state === 'ended') return;
+
+            room.state = 'ended';
+
+            const standings = getAllPlayers(room)
+                .map(p => ({ name: p.name, place: p.place, checkedCount: p.checked.length, hasBingo: p.hasBingo }))
+                .sort((a, b) => (a.place || 999) - (b.place || 999));
+
+            io.to(code).emit('game:over', { standings });
+            io.to(code).emit('activity', { message: 'The host has ended the game.' });
+            sendPushToAll(room, 'Game Over!', 'The host ended the game. Check the final standings!', null, 'game');
+        } catch (err) {
+            console.error('game:end error:', err);
+        }
+    });
+
+    socket.on('game:reset', ({ roomCode }) => {
+        try {
+            const code = String(roomCode || '').toUpperCase();
+            const room = rooms[code];
+            if (!room) return;
+            if (!room.arbiter || room.arbiter.socketId !== socket.id) {
+                return socket.emit('error', 'Only the host can restart the game');
+            }
+
+            room.state = 'active';
+            room.placementCounter = 0;
+
+            const totalCells = room.gridSize * room.gridSize;
+            const centerIdx = Math.floor(totalCells / 2);
+            const freeChecked = room.gridSize % 2 === 1 ? [centerIdx] : [];
+
+            // Reset and reshuffle each participant
+            for (const p of Object.values(room.participants)) {
+                if (p.kicked) continue;
+                const shuffled = shuffleArray(room.prompts).slice(0, totalCells);
+                if (room.gridSize % 2 === 1) shuffled[centerIdx] = 'FREE';
+                p.card = shuffled;
+                p.checked = [...freeChecked];
+                p.hasBingo = false;
+                p.place = null;
+                p.photos = {};
+                // Send new card to the player's socket
+                if (p.socketId) {
+                    const pSocket = io.sockets.sockets.get(p.socketId);
+                    if (pSocket) {
+                        pSocket.emit('card:reset', {
+                            card: p.card,
+                            checked: p.checked,
+                            gridSize: room.gridSize
+                        });
+                    }
+                }
+            }
+
+            // Reset arbiter card too
+            if (room.arbiter) {
+                const shuffled = shuffleArray(room.prompts).slice(0, totalCells);
+                if (room.gridSize % 2 === 1) shuffled[centerIdx] = 'FREE';
+                room.arbiter.card = shuffled;
+                room.arbiter.checked = [...freeChecked];
+                room.arbiter.hasBingo = false;
+                room.arbiter.place = null;
+                room.arbiter.photos = {};
+                if (room.arbiter.socketId) {
+                    const aSocket = io.sockets.sockets.get(room.arbiter.socketId);
+                    if (aSocket) {
+                        aSocket.emit('card:reset', {
+                            card: room.arbiter.card,
+                            checked: room.arbiter.checked,
+                            gridSize: room.gridSize
+                        });
+                    }
+                }
+            }
+
+            room.lastActivity = Date.now();
+            io.to(code).emit('game:started', { state: 'active' });
+            io.to(code).emit('room:update', { participants: getAllPlayers(room) });
+            io.to(code).emit('activity', { message: 'New round started! Cards reshuffled.' });
+        } catch (err) {
+            console.error('game:reset error:', err);
+        }
+    });
+
+    socket.on('task:photo', ({ roomCode, cellIndex, imageData }) => {
+        try {
+            const code = String(roomCode || '').toUpperCase();
+            const room = rooms[code];
+            if (!room) return;
+
+            const userInfo = socketToUser[socket.id];
+            if (!userInfo) return;
+
+            let participant;
+            if (room.arbiter && room.arbiter.socketId === socket.id) {
+                participant = room.arbiter;
+            } else {
+                participant = room.participants[userInfo.username];
+            }
+            if (!participant) return;
+
+            if (!Number.isInteger(cellIndex) || cellIndex < 0 || cellIndex >= participant.card.length) return;
+
+            const cellText = participant.card[cellIndex];
+            if (!(room.proofRequired || []).includes(cellText)) return;
+
+            // Validate base64 size (≤500KB unencoded ~ ≤680KB base64)
+            if (typeof imageData !== 'string' || imageData.length > 700000) {
+                return socket.emit('error', 'Photo is too large. Please use a smaller image.');
+            }
+
+            participant.photos = participant.photos || {};
+            participant.photos[cellIndex] = imageData;
+
+            // Check cell normally (always mark as checked, not toggle)
+            const checkedSet = new Set(participant.checked);
+            if (!checkedSet.has(cellIndex)) {
+                checkedSet.add(cellIndex);
+                participant.checked = [...checkedSet];
+                room.lastActivity = Date.now();
+
+                const hadBingo = participant.hasBingo;
+                participant.hasBingo = checkBingo(checkedSet, room.gridSize);
+
+                socket.emit('cell:updated', { checked: participant.checked, hasBingo: participant.hasBingo });
+
+                const message = `${participant.name} Completed: ${cellText} 📷`;
+                io.to(code).emit('activity', { message, participantName: participant.name, prompt: cellText });
+                sendPushToAll(room, 'Task Completed!', message, userInfo.username, 'task');
+
+                if (!hadBingo && participant.hasBingo) {
+                    room.placementCounter = (room.placementCounter || 0) + 1;
+                    participant.place = room.placementCounter;
+                    const placeEmoji = ['🥇','🥈','🥉'][participant.place - 1] || (participant.place + 'th');
+                    const bingoMsg = `${placeEmoji} ${participant.name} got PIngo!`;
+                    io.to(code).emit('bingo', { participantName: participant.name, message: bingoMsg, place: participant.place, placeEmoji });
+                    sendPushToAll(room, 'PIngo!', bingoMsg, userInfo.username, 'bingo');
+                }
+            } else {
+                socket.emit('cell:updated', { checked: participant.checked, hasBingo: participant.hasBingo });
+            }
+
+            io.to(code).emit('room:update', { participants: getAllPlayers(room) });
+        } catch (err) {
+            console.error('task:photo error:', err);
+        }
+    });
+
+    socket.on('photo:request', ({ roomCode, targetId }) => {
+        try {
+            const code = String(roomCode || '').toUpperCase();
+            const room = rooms[code];
+            if (!room) return;
+
+            let target;
+            if (room.arbiter && (room.arbiter.id === targetId || room.arbiter.username === targetId)) {
+                target = room.arbiter;
+            } else {
+                target = room.participants[targetId];
+            }
+            if (!target) return;
+
+            socket.emit('photo:data', {
+                targetId,
+                photos: target.photos || {}
+            });
+        } catch (err) {
+            console.error('photo:request error:', err);
+        }
+    });
+
+    socket.on('chat:message', ({ roomCode, message }) => {
+        try {
+            const code = String(roomCode || '').toUpperCase();
+            const room = rooms[code];
+            if (!room) return;
+
+            const userInfo = socketToUser[socket.id];
+            if (!userInfo) return;
+
+            let senderName;
+            if (room.arbiter && room.arbiter.socketId === socket.id) {
+                senderName = room.arbiter.name;
+            } else {
+                const p = room.participants[userInfo.username];
+                if (!p) return;
+                senderName = p.name;
+            }
+
+            if (typeof message !== 'string' || !message.trim()) return;
+            const safeMsg = message.trim().slice(0, 200);
+
+            io.to(code).emit('chat:received', {
+                senderName,
+                message: safeMsg,
+                time: Date.now()
+            });
+        } catch (err) {
+            console.error('chat:message error:', err);
         }
     });
 
@@ -845,7 +1179,8 @@ io.on('connection', (socket) => {
                             partyName: room.partyName,
                             participants: getAllPlayers(room),
                             arbiterCard: room.arbiter.card,
-                            arbiterChecked: room.arbiter.checked
+                            arbiterChecked: room.arbiter.checked,
+                    gameState: room.state || 'waiting'
                         }
                     });
                 }
@@ -880,6 +1215,34 @@ io.on('connection', (socket) => {
         }
     });
 });
+
+// =======================
+// ROOM CLEANUP
+// =======================
+
+const ROOM_IDLE_TTL_MS = 2 * 60 * 60 * 1000; // 2 hours
+
+setInterval(() => {
+    const now = Date.now();
+    for (const [code, room] of Object.entries(rooms)) {
+        const age = now - (room.lastActivity || room.createdAt);
+        if (age < ROOM_IDLE_TTL_MS) continue;
+
+        // Only clean up if all sockets are disconnected (no active players)
+        const arbiterOnline = room.arbiter && room.arbiter.socketId;
+        const anyParticipantOnline = Object.values(room.participants).some(p => p.socketId);
+        if (arbiterOnline || anyParticipantOnline) continue;
+
+        console.log(`[cleanup] Deleting idle room ${code} (idle ${Math.round(age / 60000)}m)`);
+        for (const pId of Object.keys(room.participants)) {
+            if (users[pId]) users[pId].activeRoom = null;
+        }
+        if (room.arbiter?.username && users[room.arbiter.username]) {
+            users[room.arbiter.username].activeRoom = null;
+        }
+        delete rooms[code];
+    }
+}, 30 * 60 * 1000); // run every 30 minutes
 
 // =======================
 // START SERVER
