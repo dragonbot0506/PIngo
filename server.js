@@ -687,6 +687,9 @@ io.on('connection', (socket) => {
             io.to(code).emit('room:update', {
                 participants: getAllPlayers(room)
             });
+
+            const joinName = name || 'Someone';
+            sendPushToAll(room, 'New Player Joined!', `${joinName} joined ${room.partyName}`, participantKey, 'join');
         } catch (err) {
             console.error('participant:join error:', err);
             socket.emit('error', 'Failed to join room');
@@ -834,6 +837,7 @@ io.on('connection', (socket) => {
             room.state = 'active';
             io.to(code).emit('game:started', { state: 'active' });
             io.to(code).emit('activity', { message: 'The game has started! Good luck everyone!' });
+            sendPushToAll(room, 'Game Started! 🎲', 'The host has started the game. Good luck!', null, 'game');
         } catch (err) {
             console.error('game:start error:', err);
         }
@@ -857,6 +861,7 @@ io.on('connection', (socket) => {
 
             io.to(code).emit('game:over', { standings });
             io.to(code).emit('activity', { message: 'The host has ended the game.' });
+            sendPushToAll(room, 'Game Over!', 'The host ended the game. Check the final standings!', null, 'game');
         } catch (err) {
             console.error('game:end error:', err);
         }
