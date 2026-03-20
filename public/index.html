@@ -650,6 +650,75 @@
       transform: none !important;
     }
 
+    /* ── PROOF CELLS ── */
+    .bingo-cell.proof-cell { position: relative; }
+    .proof-icon {
+      position: absolute;
+      top: 2px; right: 3px;
+      font-size: 11px;
+      line-height: 1;
+      pointer-events: none;
+    }
+    .proof-toggle { font-size: 14px; padding: 2px 6px; opacity: 0.4; }
+    .proof-toggle.proof-on { opacity: 1; }
+
+    /* ── PHOTO PROOF MODAL ── */
+    #photo-proof-modal {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,0.88);
+      z-index: 620;
+      align-items: center;
+      justify-content: center;
+      padding: 24px;
+    }
+    #photo-proof-inner {
+      background: var(--surface);
+      border-radius: 16px;
+      padding: 24px;
+      width: 100%;
+      max-width: 360px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+    #photo-proof-preview {
+      width: 100%;
+      border-radius: 8px;
+      object-fit: cover;
+      max-height: 200px;
+    }
+
+    /* ── PHOTO LIGHTBOX ── */
+    #photo-lightbox {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,0.95);
+      z-index: 800;
+      align-items: center;
+      justify-content: center;
+      flex-direction: column;
+      gap: 12px;
+    }
+    #photo-lightbox.show { display: flex; }
+    #photo-lightbox img {
+      max-width: 95vw;
+      max-height: 80vh;
+      border-radius: 8px;
+      object-fit: contain;
+    }
+    /* Photo indicator on board view cells */
+    .bingo-cell.has-photo::after {
+      content: '📷';
+      position: absolute;
+      bottom: 2px; right: 3px;
+      font-size: 10px;
+      line-height: 1;
+      pointer-events: none;
+    }
+
     /* ── CONFIRM MODAL ── */
     #confirm-modal {
       display: none;
@@ -1280,6 +1349,29 @@
   </div>
 </div>
 
+<!-- ──────────────────────── PHOTO PROOF MODAL ──────────────────────── -->
+<div id="photo-proof-modal">
+  <div id="photo-proof-inner">
+    <div style="font-family:var(--font-display);font-size:18px;letter-spacing:0.05em;">📷 PHOTO REQUIRED</div>
+    <div id="photo-proof-prompt" style="font-size:14px;color:var(--muted);line-height:1.4;"></div>
+    <img id="photo-proof-preview" alt="preview" style="display:none;" />
+    <label class="btn btn-secondary btn-sm" style="text-align:center;cursor:pointer;">
+      Choose Photo
+      <input id="photo-proof-input" type="file" accept="image/*" capture="environment" style="display:none;" onchange="onPhotoSelected(this)" />
+    </label>
+    <div class="confirm-btns">
+      <button class="btn btn-secondary btn-sm" onclick="cancelPhotoProof()">Cancel</button>
+      <button id="photo-proof-submit" class="btn btn-primary btn-sm" onclick="submitPhotoProof()" disabled>Submit</button>
+    </div>
+  </div>
+</div>
+
+<!-- ──────────────────────── PHOTO LIGHTBOX ──────────────────────── -->
+<div id="photo-lightbox" onclick="closePhotoLightbox()">
+  <img id="photo-lightbox-img" src="" alt="proof photo" />
+  <div style="color:rgba(255,255,255,0.5);font-size:13px;">Tap anywhere to close</div>
+</div>
+
 <!-- ──────────────────────── KICK CONFIRM MODAL ──────────────────────── -->
 <div id="kick-confirm-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.85);z-index:600;align-items:center;justify-content:center;">
   <div class="confirm-box">
@@ -1360,6 +1452,8 @@ let myChecked = new Set();
 let gridSize = 5;
 let arbiterId = 'arbiter-' + Math.random().toString(36).substring(2, 9);
 let prompts = [];
+let proofRequiredSet = new Set(); // setup screen: which prompts require photo proof
+let roomProofRequired = new Set(); // game screen: prompt texts requiring photo proof
 let activityLog = [];
 let arbiterCard = [];
 let arbiterChecked = new Set();
@@ -1433,6 +1527,17 @@ function initSocket() {
     updateArbiterGameControls();
     showStandingsOverlay(data.standings);
   });
+  socket.on('photo:data', (data) => {
+    boardViewPhotos = data.photos || {};
+    // Re-apply has-photo class if board is still open
+    const grid = document.getElementById('player-board-bingo-grid');
+    if (grid) {
+      Object.keys(boardViewPhotos).forEach(idx => {
+        const cell = grid.querySelector(`[data-photo-index="${idx}"]`);
+        if (cell) cell.classList.add('has-photo');
+      });
+    }
+  });
   socket.on('kicked', () => {
     showToast('You have been kicked from the party');
     resetAndGoHome();
@@ -1465,6 +1570,7 @@ function resetAndGoHome() {
   isCurrentlyArbiter = false;
   currentParticipants = [];
   gameState = 'waiting';
+  roomProofRequired = new Set();
   if (socket) {
     socket.disconnect();
     socket = null;
@@ -1498,7 +1604,16 @@ function addPrompt() {
 }
 
 function removePrompt(idx) {
-  prompts.splice(idx, 1);
+  const removed = prompts.splice(idx, 1)[0];
+  proofRequiredSet.delete(removed);
+  renderPromptList();
+}
+
+function toggleProofRequired(idx) {
+  const p = prompts[idx];
+  if (!p) return;
+  if (proofRequiredSet.has(p)) proofRequiredSet.delete(p);
+  else proofRequiredSet.add(p);
   renderPromptList();
 }
 
@@ -1513,6 +1628,7 @@ function renderPromptList() {
     <div class="prompt-item">
       <span class="prompt-num">${i+1}</span>
       <span>${esc(p)}</span>
+      <button class="btn btn-ghost proof-toggle ${proofRequiredSet.has(p) ? 'proof-on' : ''}" onclick="toggleProofRequired(${i})" title="Require photo proof">📷</button>
       <button class="prompt-del" onclick="removePrompt(${i})">✕</button>
     </div>
   `).join('');
@@ -1532,6 +1648,7 @@ async function createRoom() {
 
   const body = {
     password, gridSize: sz, prompts,
+    proofRequired: [...proofRequiredSet],
     arbiterId, arbiterName: name,
     username: loggedInUser,
     partyName
@@ -1561,6 +1678,7 @@ async function createRoom() {
 function setupArbiterDashboard(name, roomData) {
   isCurrentlyArbiter = true;
   gameState = roomData.gameState || 'waiting';
+  roomProofRequired = new Set(roomData.proofRequired || []);
   document.getElementById('a-arbiter-name').textContent = name;
   document.getElementById('a-room-code').textContent = roomData.roomCode;
   document.getElementById('a-party-name').textContent = roomData.partyName || '';
@@ -1640,8 +1758,10 @@ function renderBingoGrid(gridId, card, checked, size, isArbiter) {
   grid.innerHTML = card.map((text, i) => {
     const isFree = text === 'FREE';
     const isChecked = checked.has(i);
-    const classes = ['bingo-cell', isFree ? 'free' : '', isChecked ? 'checked' : ''].filter(Boolean).join(' ');
-    return `<div class="${classes}" data-index="${i}" data-arbiter="${isArbiter}"><span class="bingo-cell-text">${esc(text)}</span></div>`;
+    const needsProof = !isFree && roomProofRequired.has(text);
+    const classes = ['bingo-cell', isFree ? 'free' : '', isChecked ? 'checked' : '', needsProof ? 'proof-cell' : ''].filter(Boolean).join(' ');
+    const proofIcon = needsProof ? '<span class="proof-icon">📷</span>' : '';
+    return `<div class="${classes}" data-index="${i}" data-arbiter="${isArbiter}">${proofIcon}<span class="bingo-cell-text">${esc(text)}</span></div>`;
   }).join('');
 
   // Use pointer events for reliable mobile tap handling
@@ -1663,6 +1783,17 @@ function toggleCell(index, isArbiter) {
   const promptText = card[index] || '';
   const isChecked = checked.has(index);
 
+  // If cell requires photo proof and not yet checked → open photo modal
+  if (!isChecked && roomProofRequired.has(promptText)) {
+    pendingCellIndex = index;
+    document.getElementById('photo-proof-prompt').textContent = promptText;
+    document.getElementById('photo-proof-preview').src = '';
+    document.getElementById('photo-proof-preview').style.display = 'none';
+    document.getElementById('photo-proof-input').value = '';
+    document.getElementById('photo-proof-modal').style.display = 'flex';
+    return;
+  }
+
   pendingCellIndex = index;
   document.getElementById('cell-confirm-text').textContent =
     isChecked ? `Unmark "${promptText}"?` : `Mark "${promptText}" as completed?`;
@@ -1680,6 +1811,67 @@ function confirmCellCheck() {
 function cancelCellConfirm() {
   document.getElementById('cell-confirm-modal').style.display = 'none';
   pendingCellIndex = null;
+}
+
+// ── PHOTO PROOF ──
+let pendingPhotoData = null;
+
+function onPhotoSelected(input) {
+  const file = input.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = (e) => {
+    const img = new Image();
+    img.onload = () => {
+      const maxW = 800;
+      const scale = img.width > maxW ? maxW / img.width : 1;
+      const canvas = document.createElement('canvas');
+      canvas.width = Math.round(img.width * scale);
+      canvas.height = Math.round(img.height * scale);
+      canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height);
+      const base64 = canvas.toDataURL('image/jpeg', 0.8);
+      // Reject if still too large (~500KB unencoded → ~680KB base64)
+      if (base64.length > 700000) {
+        showToast('Photo is too large even after resize. Try a different image.');
+        return;
+      }
+      pendingPhotoData = base64;
+      const preview = document.getElementById('photo-proof-preview');
+      preview.src = base64;
+      preview.style.display = 'block';
+      document.getElementById('photo-proof-submit').disabled = false;
+    };
+    img.src = e.target.result;
+  };
+  reader.readAsDataURL(file);
+}
+
+function submitPhotoProof() {
+  if (pendingCellIndex === null || !pendingPhotoData || !socket || !currentRoom) return;
+  socket.emit('task:photo', {
+    roomCode: currentRoom,
+    cellIndex: pendingCellIndex,
+    imageData: pendingPhotoData
+  });
+  pendingPhotoData = null;
+  pendingCellIndex = null;
+  document.getElementById('photo-proof-modal').style.display = 'none';
+}
+
+function cancelPhotoProof() {
+  pendingPhotoData = null;
+  pendingCellIndex = null;
+  document.getElementById('photo-proof-modal').style.display = 'none';
+}
+
+function openPhotoLightbox(src) {
+  document.getElementById('photo-lightbox-img').src = src;
+  document.getElementById('photo-lightbox').classList.add('show');
+}
+
+function closePhotoLightbox() {
+  document.getElementById('photo-lightbox').classList.remove('show');
+  document.getElementById('photo-lightbox-img').src = '';
 }
 
 // ── PARTICIPANTS ──
@@ -2251,6 +2443,7 @@ function handleParticipantJoined(data) {
   myChecked = new Set(data.checked);
   gridSize = data.gridSize;
   gameState = data.gameState || 'waiting';
+  roomProofRequired = new Set(data.proofRequired || []);
 
   document.getElementById('p-player-name').textContent = loggedInUser;
   document.getElementById('p-room-code').textContent = data.roomCode;
@@ -2414,9 +2607,13 @@ function cancelKick() {
 }
 
 // ── PLAYER BOARD VIEW ──
+let boardViewPhotos = {}; // photos for the currently open board view
+
 function viewPlayerBoard(playerId) {
   const player = currentParticipants.find(p => p.id === playerId);
   if (!player || !player.card || player.card.length === 0) return;
+
+  boardViewPhotos = {};
 
   const freeOffset = (gridSize % 2 === 1) ? 1 : 0;
   const effectiveTotal = gridSize * gridSize - freeOffset;
@@ -2430,22 +2627,37 @@ function viewPlayerBoard(playerId) {
 
   renderBingoHeader('player-board-bingo-header', gridSize);
 
+  const photoKeys = new Set(player.photoKeys || []);
   const grid = document.getElementById('player-board-bingo-grid');
   grid.style.gridTemplateColumns = `repeat(${gridSize}, 1fr)`;
   const checkedSet = new Set(player.checked);
   grid.innerHTML = player.card.map((text, i) => {
     const isFree = text === 'FREE';
     const isChecked = checkedSet.has(i);
-    const classes = ['bingo-cell', isFree ? 'free' : '', isChecked ? 'checked' : ''].filter(Boolean).join(' ');
-    return `<div class="${classes}"><span class="bingo-cell-text">${esc(text)}</span></div>`;
+    const hasPhoto = photoKeys.has(i);
+    const classes = ['bingo-cell', isFree ? 'free' : '', isChecked ? 'checked' : '', hasPhoto ? 'has-photo' : ''].filter(Boolean).join(' ');
+    return `<div class="${classes}" data-photo-index="${i}"><span class="bingo-cell-text">${esc(text)}</span></div>`;
   }).join('');
-  // No pointer event handlers — grid has readonly class
+
+  // Request actual photos from server to enable lightbox
+  if (photoKeys.size > 0 && socket && currentRoom) {
+    socket.emit('photo:request', { roomCode: currentRoom, targetId: playerId });
+  }
+
+  // Click handler for photo cells
+  grid.onpointerup = (e) => {
+    const cell = e.target.closest('.bingo-cell.has-photo');
+    if (!cell) return;
+    const idx = parseInt(cell.dataset.photoIndex);
+    if (boardViewPhotos[idx]) openPhotoLightbox(boardViewPhotos[idx]);
+  };
 
   document.getElementById('player-board-modal').classList.add('show');
 }
 
 function closePlayerBoardModal() {
   document.getElementById('player-board-modal').classList.remove('show');
+  boardViewPhotos = {};
 }
 
 // ── MY PARTIES ──

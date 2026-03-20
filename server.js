@@ -181,7 +181,8 @@ function sanitizeParticipants(participants) {
             checked: p.checked,
             card: p.card,
             hasBingo: p.hasBingo,
-            place: p.place || null
+            place: p.place || null,
+            photoKeys: Object.keys(p.photos || {}).map(Number)
         }));
 }
 
@@ -229,6 +230,7 @@ function autoTransferHost(room, roomCode, oldHostName) {
                     roomCode,
                     gridSize: room.gridSize,
                     prompts: room.prompts,
+                    proofRequired: room.proofRequired || [],
                     partyName: room.partyName,
                     participants: getAllPlayers(room),
                     arbiterCard: room.arbiter.card,
@@ -257,6 +259,7 @@ function getAllPlayers(room) {
             card: room.arbiter.card || [],
             hasBingo: room.arbiter.hasBingo || false,
             place: room.arbiter.place || null,
+            photoKeys: Object.keys(room.arbiter.photos || {}).map(Number),
             isHost: true
         });
     }
@@ -308,6 +311,7 @@ app.post('/api/rooms', (req, res) => {
             password,
             gridSize,
             prompts,
+            proofRequired,
             arbiterId,
             arbiterName,
             username,
@@ -349,6 +353,9 @@ app.post('/api/rooms', (req, res) => {
             password,
             gridSize: parsedGridSize,
             prompts: prompts.slice(0, parsedGridSize * parsedGridSize),
+            proofRequired: Array.isArray(proofRequired)
+                ? proofRequired.filter(s => typeof s === 'string').slice(0, 100)
+                : [],
             partyName: partyName || 'Unnamed Party',
             participants: {},
             arbiter: {
@@ -574,11 +581,12 @@ io.on('connection', (socket) => {
                 roomCode: code,
                 gridSize: room.gridSize,
                 prompts: room.prompts,
+                proofRequired: room.proofRequired || [],
                 partyName: room.partyName,
                 participants: getAllPlayers(room),
                 arbiterCard: room.arbiter.card,
                 arbiterChecked: room.arbiter.checked,
-                    gameState: room.state || 'waiting'
+                gameState: room.state || 'waiting'
             });
         } catch (err) {
             console.error('arbiter:join error:', err);
@@ -624,6 +632,7 @@ io.on('connection', (socket) => {
                     gridSize: room.gridSize,
                     roomCode: code,
                     partyName: room.partyName,
+                    proofRequired: room.proofRequired || [],
                     gameState: room.state || 'waiting'
                 });
 
@@ -652,7 +661,8 @@ io.on('connection', (socket) => {
                 card,
                 checked: [...checked],
                 hasBingo: false,
-                place: null
+                place: null,
+                photos: {}
             };
             room.lastActivity = Date.now();
 
@@ -717,6 +727,7 @@ io.on('connection', (socket) => {
                     gridSize: room.gridSize,
                     roomCode: code,
                     partyName: room.partyName,
+                    proofRequired: room.proofRequired || [],
                     gameState: room.state || 'waiting'
                 });
 
@@ -876,6 +887,7 @@ io.on('connection', (socket) => {
                 p.checked = [...freeChecked];
                 p.hasBingo = false;
                 p.place = null;
+                p.photos = {};
                 // Send new card to the player's socket
                 if (p.socketId) {
                     const pSocket = io.sockets.sockets.get(p.socketId);
@@ -897,6 +909,7 @@ io.on('connection', (socket) => {
                 room.arbiter.checked = [...freeChecked];
                 room.arbiter.hasBingo = false;
                 room.arbiter.place = null;
+                room.arbiter.photos = {};
                 if (room.arbiter.socketId) {
                     const aSocket = io.sockets.sockets.get(room.arbiter.socketId);
                     if (aSocket) {
@@ -915,6 +928,93 @@ io.on('connection', (socket) => {
             io.to(code).emit('activity', { message: 'New round started! Cards reshuffled.' });
         } catch (err) {
             console.error('game:reset error:', err);
+        }
+    });
+
+    socket.on('task:photo', ({ roomCode, cellIndex, imageData }) => {
+        try {
+            const code = String(roomCode || '').toUpperCase();
+            const room = rooms[code];
+            if (!room) return;
+
+            const userInfo = socketToUser[socket.id];
+            if (!userInfo) return;
+
+            let participant;
+            if (room.arbiter && room.arbiter.socketId === socket.id) {
+                participant = room.arbiter;
+            } else {
+                participant = room.participants[userInfo.username];
+            }
+            if (!participant) return;
+
+            if (!Number.isInteger(cellIndex) || cellIndex < 0 || cellIndex >= participant.card.length) return;
+
+            const cellText = participant.card[cellIndex];
+            if (!(room.proofRequired || []).includes(cellText)) return;
+
+            // Validate base64 size (≤500KB unencoded ~ ≤680KB base64)
+            if (typeof imageData !== 'string' || imageData.length > 700000) {
+                return socket.emit('error', 'Photo is too large. Please use a smaller image.');
+            }
+
+            participant.photos = participant.photos || {};
+            participant.photos[cellIndex] = imageData;
+
+            // Check cell normally (always mark as checked, not toggle)
+            const checkedSet = new Set(participant.checked);
+            if (!checkedSet.has(cellIndex)) {
+                checkedSet.add(cellIndex);
+                participant.checked = [...checkedSet];
+                room.lastActivity = Date.now();
+
+                const hadBingo = participant.hasBingo;
+                participant.hasBingo = checkBingo(checkedSet, room.gridSize);
+
+                socket.emit('cell:updated', { checked: participant.checked, hasBingo: participant.hasBingo });
+
+                const message = `${participant.name} Completed: ${cellText} 📷`;
+                io.to(code).emit('activity', { message, participantName: participant.name, prompt: cellText });
+                sendPushToAll(room, 'Task Completed!', message, userInfo.username, 'task');
+
+                if (!hadBingo && participant.hasBingo) {
+                    room.placementCounter = (room.placementCounter || 0) + 1;
+                    participant.place = room.placementCounter;
+                    const placeEmoji = ['🥇','🥈','🥉'][participant.place - 1] || (participant.place + 'th');
+                    const bingoMsg = `${placeEmoji} ${participant.name} got PIngo!`;
+                    io.to(code).emit('bingo', { participantName: participant.name, message: bingoMsg, place: participant.place, placeEmoji });
+                    sendPushToAll(room, 'PIngo!', bingoMsg, userInfo.username, 'bingo');
+                }
+            } else {
+                socket.emit('cell:updated', { checked: participant.checked, hasBingo: participant.hasBingo });
+            }
+
+            io.to(code).emit('room:update', { participants: getAllPlayers(room) });
+        } catch (err) {
+            console.error('task:photo error:', err);
+        }
+    });
+
+    socket.on('photo:request', ({ roomCode, targetId }) => {
+        try {
+            const code = String(roomCode || '').toUpperCase();
+            const room = rooms[code];
+            if (!room) return;
+
+            let target;
+            if (room.arbiter && (room.arbiter.id === targetId || room.arbiter.username === targetId)) {
+                target = room.arbiter;
+            } else {
+                target = room.participants[targetId];
+            }
+            if (!target) return;
+
+            socket.emit('photo:data', {
+                targetId,
+                photos: target.photos || {}
+            });
+        } catch (err) {
+            console.error('photo:request error:', err);
         }
     });
 
