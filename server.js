@@ -371,6 +371,7 @@ app.post('/api/rooms', (req, res) => {
             },
             state: 'waiting',
             placementCounter: 0,
+            chatHistory: [],
             createdAt: Date.now(),
             lastActivity: Date.now()
         };
@@ -586,7 +587,8 @@ io.on('connection', (socket) => {
                 participants: getAllPlayers(room),
                 arbiterCard: room.arbiter.card,
                 arbiterChecked: room.arbiter.checked,
-                gameState: room.state || 'waiting'
+                gameState: room.state || 'waiting',
+                chatHistory: room.chatHistory || []
             });
         } catch (err) {
             console.error('arbiter:join error:', err);
@@ -633,7 +635,8 @@ io.on('connection', (socket) => {
                     roomCode: code,
                     partyName: room.partyName,
                     proofRequired: room.proofRequired || [],
-                    gameState: room.state || 'waiting'
+                    gameState: room.state || 'waiting',
+                    chatHistory: room.chatHistory || []
                 });
 
                 io.to(code).emit('room:update', {
@@ -681,7 +684,8 @@ io.on('connection', (socket) => {
                 gridSize: room.gridSize,
                 roomCode: code,
                 partyName: room.partyName,
-                gameState: room.state || 'waiting'
+                gameState: room.state || 'waiting',
+                chatHistory: room.chatHistory || []
             });
 
             io.to(code).emit('room:update', {
@@ -715,7 +719,8 @@ io.on('connection', (socket) => {
                     participants: getAllPlayers(room),
                     arbiterCard: room.arbiter.card,
                     arbiterChecked: room.arbiter.checked,
-                    gameState: room.state || 'waiting'
+                    gameState: room.state || 'waiting',
+                    chatHistory: room.chatHistory || []
                 });
             } else {
                 const participant = room.participants[username];
@@ -731,7 +736,8 @@ io.on('connection', (socket) => {
                     roomCode: code,
                     partyName: room.partyName,
                     proofRequired: room.proofRequired || [],
-                    gameState: room.state || 'waiting'
+                    gameState: room.state || 'waiting',
+                    chatHistory: room.chatHistory || []
                 });
 
                 io.to(code).emit('room:update', {
@@ -771,8 +777,16 @@ io.on('connection', (socket) => {
 
             const checkedSet = new Set(participant.checked);
 
-            if (checkedSet.has(cellIndex)) checkedSet.delete(cellIndex);
-            else checkedSet.add(cellIndex);
+            // Regular players can only check cells, not uncheck them.
+            // Only the arbiter (host) can uncheck cells for any player via their own board.
+            if (checkedSet.has(cellIndex)) {
+                if (!isArbiter) {
+                    return socket.emit('error', 'Only the host can uncheck cells');
+                }
+                checkedSet.delete(cellIndex);
+            } else {
+                checkedSet.add(cellIndex);
+            }
 
             participant.checked = [...checkedSet];
             room.lastActivity = Date.now();
@@ -1044,13 +1058,71 @@ io.on('connection', (socket) => {
             if (typeof message !== 'string' || !message.trim()) return;
             const safeMsg = message.trim().slice(0, 200);
 
-            io.to(code).emit('chat:received', {
+            const chatEntry = {
                 senderName,
                 message: safeMsg,
                 time: Date.now()
-            });
+            };
+
+            // Store in room chat history (cap at 200 messages)
+            room.chatHistory = room.chatHistory || [];
+            room.chatHistory.push(chatEntry);
+            if (room.chatHistory.length > 200) room.chatHistory.shift();
+
+            io.to(code).emit('chat:received', chatEntry);
         } catch (err) {
             console.error('chat:message error:', err);
+        }
+    });
+
+    socket.on('host:uncheck', ({ roomCode, targetId, cellIndex }) => {
+        try {
+            const code = String(roomCode || '').toUpperCase();
+            const room = rooms[code];
+            if (!room) return;
+            if (!room.arbiter || room.arbiter.socketId !== socket.id) {
+                return socket.emit('error', 'Only the host can uncheck cells for players');
+            }
+
+            let target;
+            let targetSocket;
+            if (room.arbiter.username === targetId || room.arbiter.id === targetId) {
+                target = room.arbiter;
+                targetSocket = room.arbiter.socketId;
+            } else {
+                target = room.participants[targetId];
+                targetSocket = target?.socketId;
+            }
+            if (!target) return socket.emit('error', 'Player not found');
+
+            if (!Number.isInteger(cellIndex) || cellIndex < 0 || cellIndex >= target.card.length) return;
+
+            const checkedSet = new Set(target.checked);
+            if (!checkedSet.has(cellIndex)) return; // already unchecked
+
+            checkedSet.delete(cellIndex);
+            target.checked = [...checkedSet];
+            target.hasBingo = checkBingo(checkedSet, room.gridSize);
+            room.lastActivity = Date.now();
+
+            // Notify the target player
+            if (targetSocket) {
+                const ts = io.sockets.sockets.get(targetSocket);
+                if (ts) {
+                    ts.emit('cell:updated', { checked: target.checked, hasBingo: target.hasBingo });
+                }
+            }
+
+            const promptText = target.card[cellIndex];
+            io.to(code).emit('activity', {
+                message: `Host unchecked "${promptText}" for ${target.name}`,
+                participantName: target.name,
+                prompt: promptText
+            });
+
+            io.to(code).emit('room:update', { participants: getAllPlayers(room) });
+        } catch (err) {
+            console.error('host:uncheck error:', err);
         }
     });
 

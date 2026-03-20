@@ -510,7 +510,7 @@
     .chat-input-row {
       display: flex;
       gap: 8px;
-      padding: 10px 12px;
+      padding: 10px 12px calc(10px + env(safe-area-inset-bottom, 16px));
       border-top: 1px solid var(--border);
       background: var(--bg);
     }
@@ -1783,6 +1783,11 @@ function setupArbiterDashboard(name, roomData) {
   document.getElementById('info-party-name').textContent = roomData.partyName || '';
   document.getElementById('info-grid-size').textContent = `${roomData.gridSize}×${roomData.gridSize}`;
 
+  // Load room-specific chat history
+  chatLog = Array.isArray(roomData.chatHistory) ? roomData.chatHistory : [];
+  chatUnread = { p: 0, a: 0 };
+  renderChat();
+
   // Use server-provided arbiter card (persisted across sessions)
   arbiterCard = roomData.arbiterCard;
   arbiterChecked = new Set(roomData.arbiterChecked || []);
@@ -1891,6 +1896,11 @@ function toggleCell(index, isArbiter) {
     return;
   }
 
+  // Regular players cannot uncheck cells — only the host can
+  if (isChecked && !isCurrentlyArbiter) {
+    return showToast('Only the host can uncheck cells');
+  }
+
   pendingCellIndex = index;
   document.getElementById('cell-confirm-text').textContent =
     isChecked ? `Unmark "${promptText}"?` : `Mark "${promptText}" as completed?`;
@@ -1900,7 +1910,14 @@ function toggleCell(index, isArbiter) {
 function confirmCellCheck() {
   document.getElementById('cell-confirm-modal').style.display = 'none';
   if (pendingCellIndex !== null && socket && currentRoom) {
-    socket.emit('cell:check', { roomCode: currentRoom, cellIndex: pendingCellIndex });
+    if (boardViewTargetId) {
+      // Host unchecking a cell on another player's board
+      socket.emit('host:uncheck', { roomCode: currentRoom, targetId: boardViewTargetId, cellIndex: pendingCellIndex });
+      boardViewTargetId = null;
+      closePlayerBoardModal();
+    } else {
+      socket.emit('cell:check', { roomCode: currentRoom, cellIndex: pendingCellIndex });
+    }
   }
   pendingCellIndex = null;
 }
@@ -1908,6 +1925,7 @@ function confirmCellCheck() {
 function cancelCellConfirm() {
   document.getElementById('cell-confirm-modal').style.display = 'none';
   pendingCellIndex = null;
+  boardViewTargetId = null;
 }
 
 // ── PHOTO PROOF ──
@@ -1997,14 +2015,14 @@ function renderParticipants(containerId, participants, total, isArbiterView) {
     const isMe = p.id === loggedInUser;
     const hostTag = p.isHost ? '<span style="font-size:11px;color:var(--accent3);font-weight:700;letter-spacing:0.05em;">[HOST]</span> ' : '';
     const kickBtn = isArbiterView && !p.isHost && !isMe
-      ? `<button class="btn btn-ghost" style="color:var(--accent2);font-size:11px;padding:2px 8px;margin-top:2px;" onclick="event.stopPropagation(); kickPlayer(${JSON.stringify(p.id)})">KICK</button>`
+      ? `<button class="btn btn-ghost kick-btn" style="color:var(--accent2);font-size:11px;padding:2px 8px;margin-top:2px;" data-kick-id="${esc(p.id)}">KICK</button>`
       : '';
     const placeEmojis = ['🥇','🥈','🥉'];
     const placeLabel = p.place
       ? (placeEmojis[p.place - 1] || `${p.place}th`) + ' Place'
       : null;
     return `
-      <div class="participant-card ${p.hasBingo ? 'has-bingo' : ''}" onclick="viewPlayerBoard(${JSON.stringify(p.id)})">
+      <div class="participant-card ${p.hasBingo ? 'has-bingo' : ''}" data-player-id="${esc(p.id)}">
         <div class="participant-name">${isMe ? '⭐ ' : ''}${hostTag}${esc(p.name)}</div>
         ${p.hasBingo ? `<div class="bingo-tag">${placeLabel ? placeLabel : '🎉 PIngo!'}</div>` : `
           <div class="participant-progress">
@@ -2016,6 +2034,20 @@ function renderParticipants(containerId, participants, total, isArbiterView) {
       </div>
     `;
   }).join('');
+
+  // Delegated click handler for participant cards
+  el.onclick = function(e) {
+    // Handle kick button
+    const kickBtn = e.target.closest('.kick-btn');
+    if (kickBtn) {
+      e.stopPropagation();
+      kickPlayer(kickBtn.dataset.kickId);
+      return;
+    }
+    // Handle card click to view board
+    const card = e.target.closest('.participant-card');
+    if (card) viewPlayerBoard(card.dataset.playerId);
+  };
 }
 
 // ── ACTIVITY FEED ──
@@ -2247,10 +2279,9 @@ async function loadLobby() {
     list.innerHTML = rooms.map(r => {
       const alreadyJoined = r.userStatus === 'host' || r.userStatus === 'member';
       const isHost = r.userStatus === 'host';
-      const safePartyName = (r.partyName || '').replace(/'/g, "\\'");
       if (alreadyJoined) {
         return `
-          <div class="lobby-card already-joined" onclick="rejoinFromLobby(${JSON.stringify(r.roomCode)}, ${isHost})">
+          <div class="lobby-card already-joined" data-action="rejoin" data-room="${esc(r.roomCode)}" data-is-host="${isHost}">
             <div>
               <div class="lobby-card-name">${esc(r.partyName || 'Unnamed Party')}</div>
               <div class="lobby-card-info">Hosted by ${esc(r.hostName)}</div>
@@ -2264,7 +2295,7 @@ async function loadLobby() {
         `;
       }
       return `
-        <div class="lobby-card" onclick="promptLobbyJoin(${JSON.stringify(r.roomCode)}, ${JSON.stringify(r.partyName || '')})">
+        <div class="lobby-card" data-action="join" data-room="${esc(r.roomCode)}" data-party-name="${esc(r.partyName || '')}">
           <div>
             <div class="lobby-card-name">${esc(r.partyName || 'Unnamed Party')}</div>
             <div class="lobby-card-info">Hosted by ${esc(r.hostName)}</div>
@@ -2273,6 +2304,19 @@ async function loadLobby() {
         </div>
       `;
     }).join('');
+
+    // Delegated click handler for lobby cards
+    list.onclick = function(e) {
+      const card = e.target.closest('.lobby-card');
+      if (!card) return;
+      const action = card.dataset.action;
+      const roomCode = card.dataset.room;
+      if (action === 'rejoin') {
+        rejoinFromLobby(roomCode, card.dataset.isHost === 'true');
+      } else if (action === 'join') {
+        promptLobbyJoin(roomCode, card.dataset.partyName || '');
+      }
+    };
   } catch {
     list.innerHTML = '<div class="empty-state">Failed to load parties.</div>';
   }
@@ -2597,6 +2641,11 @@ function handleParticipantJoined(data) {
   gameState = data.gameState || 'waiting';
   roomProofRequired = new Set(data.proofRequired || []);
 
+  // Load room-specific chat history
+  chatLog = Array.isArray(data.chatHistory) ? data.chatHistory : [];
+  chatUnread = { p: 0, a: 0 };
+  renderChat();
+
   document.getElementById('p-player-name').textContent = loggedInUser;
   document.getElementById('p-room-code').textContent = data.roomCode;
   document.getElementById('p-party-name').textContent = data.partyName || '';
@@ -2681,17 +2730,23 @@ function showTransferModal() {
     list.innerHTML = '<div class="empty-state">No other players to transfer to.</div>';
   } else {
     list.innerHTML = nonHostPlayers.map(p => `
-      <button class="btn btn-secondary btn-sm" style="text-align:left;" onclick="confirmTransfer(${JSON.stringify(p.id)}, ${JSON.stringify(p.name)})">
+      <button class="btn btn-secondary btn-sm" style="text-align:left;" data-transfer-id="${esc(p.id)}">
         ${esc(p.name)}
       </button>
     `).join('');
   }
+  // Delegated click for transfer buttons
+  list.onclick = function(e) {
+    const btn = e.target.closest('[data-transfer-id]');
+    if (!btn) return;
+    confirmTransfer(btn.dataset.transferId);
+  };
   document.getElementById('transfer-modal').style.display = 'flex';
 }
 function closeTransferModal() {
   document.getElementById('transfer-modal').style.display = 'none';
 }
-function confirmTransfer(playerId, playerName) {
+function confirmTransfer(playerId) {
   closeTransferModal();
   if (!socket || !currentRoom) return;
   socket.emit('host:transfer', { roomCode: currentRoom, newHostId: playerId });
@@ -2760,6 +2815,7 @@ function cancelKick() {
 
 // ── PLAYER BOARD VIEW ──
 let boardViewPhotos = {}; // photos for the currently open board view
+let boardViewTargetId = null; // player ID when host unchecks from board view
 
 function viewPlayerBoard(playerId) {
   const player = currentParticipants.find(p => p.id === playerId);
@@ -2781,6 +2837,12 @@ function viewPlayerBoard(playerId) {
 
   const photoKeys = new Set(player.photoKeys || []);
   const grid = document.getElementById('player-board-bingo-grid');
+  // Host can interact with cells (to uncheck), regular players see read-only
+  if (isCurrentlyArbiter) {
+    grid.classList.remove('readonly');
+  } else {
+    grid.classList.add('readonly');
+  }
   grid.style.gridTemplateColumns = `repeat(${gridSize}, 1fr)`;
   const checkedSet = new Set(player.checked);
   grid.innerHTML = player.card.map((text, i) => {
@@ -2796,12 +2858,26 @@ function viewPlayerBoard(playerId) {
     socket.emit('photo:request', { roomCode: currentRoom, targetId: playerId });
   }
 
-  // Click handler for photo cells
+  // Click handler for cells in player board view
   grid.onpointerup = (e) => {
-    const cell = e.target.closest('.bingo-cell.has-photo');
+    const cell = e.target.closest('.bingo-cell');
     if (!cell) return;
     const idx = parseInt(cell.dataset.photoIndex);
-    if (boardViewPhotos[idx]) openPhotoLightbox(boardViewPhotos[idx]);
+
+    // Photo lightbox for photo cells
+    if (cell.classList.contains('has-photo') && boardViewPhotos[idx]) {
+      openPhotoLightbox(boardViewPhotos[idx]);
+      return;
+    }
+
+    // Host can uncheck cells on a player's board
+    if (isCurrentlyArbiter && cell.classList.contains('checked') && !cell.classList.contains('free')) {
+      boardViewTargetId = playerId;
+      pendingCellIndex = idx;
+      const promptText = player.card[idx] || '';
+      document.getElementById('cell-confirm-text').textContent = `Unmark "${promptText}" for ${player.name}?`;
+      document.getElementById('cell-confirm-modal').style.display = 'flex';
+    }
   };
 
   document.getElementById('player-board-modal').classList.add('show');
