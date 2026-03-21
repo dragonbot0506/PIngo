@@ -1834,7 +1834,7 @@
 
   <div class="tabs">
     <button class="tab active" onclick="switchTab(this,'pt-p-tab-activities')">ACTIVITIES</button>
-    <button class="tab" onclick="switchTab(this,'pt-p-tab-leaderboard')">SCORES</button>
+    <button class="tab" onclick="switchTab(this,'pt-p-tab-players')">PLAYERS</button>
     <button class="tab" onclick="switchTab(this,'pt-p-tab-feed')">FEED</button>
     <button id="pt-p-chat-tab-btn" class="tab" onclick="switchTab(this,'pt-p-tab-chat');clearChatBadge('pt-p')">CHAT</button>
     <button class="tab" style="color:var(--accent2);flex:0.6;" onclick="showLeaveConfirm()">LEAVE</button>
@@ -1853,9 +1853,9 @@
       </div>
     </div>
 
-    <!-- Leaderboard Tab -->
-    <div id="pt-p-tab-leaderboard" class="tab-panel" style="padding:16px;">
-      <div class="section-header">LEADERBOARD</div>
+    <!-- Players Tab (leaderboard + tap to view completions) -->
+    <div id="pt-p-tab-players" class="tab-panel" style="padding:16px;">
+      <div class="section-header">PLAYERS</div>
       <div id="pt-p-leaderboard" class="leaderboard-list">
         <div class="empty-state">No scores yet!</div>
       </div>
@@ -1901,7 +1901,6 @@
 
   <div class="tabs">
     <button class="tab active" onclick="switchTab(this,'pt-h-tab-activities')">ACTIVITIES</button>
-    <button class="tab" onclick="switchTab(this,'pt-h-tab-leaderboard')">SCORES</button>
     <button class="tab" onclick="switchTab(this,'pt-h-tab-players')">PLAYERS</button>
     <button class="tab" onclick="switchTab(this,'pt-h-tab-feed')">FEED</button>
     <button id="pt-h-chat-tab-btn" class="tab" onclick="switchTab(this,'pt-h-tab-chat');clearChatBadge('pt-h')">CHAT</button>
@@ -1917,18 +1916,11 @@
       </div>
     </div>
 
-    <!-- Leaderboard Tab -->
-    <div id="pt-h-tab-leaderboard" class="tab-panel" style="padding:16px;">
-      <div class="section-header">LEADERBOARD</div>
-      <div id="pt-h-leaderboard" class="leaderboard-list">
-        <div class="empty-state">No scores yet!</div>
-      </div>
-    </div>
-
-    <!-- Players Tab -->
+    <!-- Players Tab (combined leaderboard + player management) -->
     <div id="pt-h-tab-players" class="tab-panel" style="padding:16px;">
+      <div id="pt-h-join-requests" style="display:none;margin-bottom:12px;"></div>
       <div class="section-header">PLAYERS (<span id="pt-h-player-count">0</span>)</div>
-      <div id="pt-h-participants" class="participant-grid">
+      <div id="pt-h-participants" class="leaderboard-list">
         <div class="empty-state">Waiting for players...</div>
       </div>
     </div>
@@ -2050,11 +2042,33 @@
   </div>
 </div>
 
+<!-- ──────────────────────── JOIN REQUEST MODAL (host sees) ──────────────────────── -->
+<div id="join-request-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.85);z-index:700;align-items:center;justify-content:center;">
+  <div class="confirm-box">
+    <p style="font-family:var(--font-display);font-size:18px;color:var(--accent);">JOIN REQUEST</p>
+    <p id="join-request-text" style="font-size:15px;"></p>
+    <div class="confirm-btns">
+      <button class="btn btn-secondary" onclick="denyJoinRequest()">Deny</button>
+      <button class="btn btn-primary" onclick="approveJoinRequest()">Approve</button>
+    </div>
+  </div>
+</div>
+
+<!-- ──────────────────────── JOIN PENDING MODAL (player sees) ──────────────────────── -->
+<div id="join-pending-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.85);z-index:700;align-items:center;justify-content:center;">
+  <div class="confirm-box">
+    <p style="font-family:var(--font-display);font-size:18px;color:var(--accent);">REQUEST SENT</p>
+    <p id="join-pending-text" style="font-size:14px;color:var(--muted);text-align:center;">Waiting for host to approve your rejoin request...</p>
+    <button class="btn btn-ghost btn-sm" onclick="closeJoinPendingModal()">Cancel</button>
+  </div>
+</div>
+
 <!-- ──────────────────────── HOST ACTIONS MODAL ──────────────────────── -->
 <div id="host-actions-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.85);z-index:600;align-items:center;justify-content:center;">
   <div class="confirm-box">
     <p style="font-family:var(--font-display);font-size:20px;color:var(--accent);">HOST OPTIONS</p>
-    <p style="font-size:14px;color:var(--muted);">If you leave, the host role will be transferred to a random player.</p>
+    <button class="btn btn-secondary" onclick="confirmHostLeave()">LEAVE PARTY</button>
+    <p style="font-size:12px;color:var(--muted);margin:-8px 0 4px;">Host role transfers to a random player</p>
     <button class="btn btn-danger" onclick="showDeletePartyModal()">DELETE PARTY</button>
     <button class="btn btn-ghost" onclick="closeHostActions()">Cancel</button>
   </div>
@@ -2249,6 +2263,18 @@ function initSocket() {
       handleParticipantJoined(data.data);
     }
     showToast('Your role has been updated');
+  });
+  // Join request flow (works across bingo and points mode)
+  socket.on('join:request', (data) => {
+    handleJoinRequest(data);
+  });
+  socket.on('join:pending', (data) => {
+    document.getElementById('join-pending-text').textContent = data.message || 'Waiting for host approval...';
+    document.getElementById('join-pending-modal').style.display = 'flex';
+  });
+  socket.on('join:denied', (data) => {
+    closeJoinPendingModal();
+    showToast(data.message || 'Your rejoin request was denied.');
   });
 }
 
@@ -3513,6 +3539,7 @@ function setupPointsPlayer(data) {
   socket.off('game:over');
   socket.on('game:over', (d) => {
     gameState = 'ended';
+    pointsLeaderboard = d.leaderboard || pointsLeaderboard;
     renderPointsActivities('pt-p', false);
     renderPointsLeaderboard('pt-p', pointsLeaderboard);
     showPointsStandings(d.standings || []);
@@ -3555,7 +3582,6 @@ function setupPointsHost(data) {
 
   const players = Array.isArray(data.participants) ? data.participants : Object.values(data.participants || {});
   renderPointsActivities('pt-h', true);
-  renderPointsLeaderboard('pt-h', pointsLeaderboard);
   renderPointsFeed('pt-h');
   renderPointsChat('pt-h');
   renderPointsPlayers(players);
@@ -3567,7 +3593,7 @@ function setupPointsHost(data) {
     currentActivities = d.activities || currentActivities;
     pointsLeaderboard = d.leaderboard || [];
     renderPointsActivities('pt-h', true);
-    renderPointsLeaderboard('pt-h', pointsLeaderboard);
+    renderPointsPlayers(currentParticipants);
     if (playerDetailOpenId) _renderPlayerDetail();
   });
 
@@ -3605,8 +3631,9 @@ function setupPointsHost(data) {
   socket.off('game:over');
   socket.on('game:over', (d) => {
     gameState = 'ended';
+    pointsLeaderboard = d.leaderboard || pointsLeaderboard;
     renderPointsActivities('pt-h', true);
-    renderPointsLeaderboard('pt-h', pointsLeaderboard);
+    renderPointsPlayers(currentParticipants);
     showPointsStandings(d.standings || []);
     updatePointsHostControls();
   });
@@ -3795,6 +3822,7 @@ function renderPointsChat(prefix) {
 }
 
 function renderPointsPlayers(players) {
+  currentParticipants = players; // keep in sync for kickPlayer / detail modal
   const container = document.getElementById('pt-h-participants');
   const count = document.getElementById('pt-h-player-count');
   if (!container) return;
@@ -3804,14 +3832,29 @@ function renderPointsPlayers(players) {
     container.innerHTML = '<div class="empty-state">Waiting for players...</div>';
     return;
   }
-  container.innerHTML = active.map(p => {
+  // Sort by points desc (same order as leaderboard)
+  const ranked = [...active].sort((a, b) => {
+    const pa = pointsLeaderboard.find(r => r.id === a.id)?.points || 0;
+    const pb = pointsLeaderboard.find(r => r.id === b.id)?.points || 0;
+    return pb - pa;
+  });
+  const emojis = ['🥇','🥈','🥉'];
+  container.innerHTML = ranked.map((p, i) => {
     const pts = pointsLeaderboard.find(r => r.id === p.id)?.points || 0;
+    const isMe = p.id === myParticipantId;
     return `
-      <div class="participant-card${p.isHost ? ' host-card' : ''}">
-        <div class="participant-name">${esc(p.name)}</div>
-        <div style="font-family:var(--font-display);font-size:18px;color:var(--accent);">${pts} pts</div>
-        ${p.isHost ? '<div class="host-badge">HOST</div>' : ''}
-        ${!p.isHost ? `<button class="kick-btn" onclick="kickPlayer('${esc(p.id)}')">✕</button>` : ''}
+      <div class="leaderboard-row" style="cursor:pointer;${isMe ? 'border-color:var(--accent);' : ''}"
+           onclick="showPlayerDetail('${esc(p.id)}','${esc(p.name)}')">
+        <div class="leaderboard-rank">${emojis[i] || (i+1)}</div>
+        <div class="leaderboard-name">
+          ${esc(p.name)}
+          ${p.isHost ? ' <span style="font-size:11px;color:var(--accent3);">[HOST]</span>' : ''}
+          ${isMe ? ' <span style="font-size:11px;color:var(--accent3);">(you)</span>' : ''}
+        </div>
+        <div style="display:flex;align-items:center;gap:8px;">
+          <span class="leaderboard-points">${pts}</span>
+          ${!p.isHost ? `<button class="kick-btn" style="flex-shrink:0;" onclick="event.stopPropagation();kickPlayer('${esc(p.id)}')">✕</button>` : ''}
+        </div>
       </div>
     `;
   }).join('');
@@ -3987,6 +4030,10 @@ function showHostActions() {
 function closeHostActions() {
   document.getElementById('host-actions-modal').style.display = 'none';
 }
+function confirmHostLeave() {
+  closeHostActions();
+  leaveRoom();
+}
 
 function showTransferModal() {
   closeHostActions();
@@ -4077,6 +4124,61 @@ function confirmKick() {
 function cancelKick() {
   document.getElementById('kick-confirm-modal').style.display = 'none';
   pendingKickPlayerId = null;
+}
+
+// ── JOIN REQUEST FLOW ──
+let pendingJoinRequestId = null;
+let pendingJoinRequestName = null;
+
+function handleJoinRequest(data) {
+  pendingJoinRequestId = data.playerId;
+  pendingJoinRequestName = data.playerName;
+  document.getElementById('join-request-text').textContent = `${data.playerName} wants to rejoin the party.`;
+  document.getElementById('join-request-modal').style.display = 'flex';
+  // Also show in-screen notification for points host
+  renderJoinRequestBanner();
+}
+
+function approveJoinRequest() {
+  document.getElementById('join-request-modal').style.display = 'none';
+  if (pendingJoinRequestId && socket && currentRoom) {
+    socket.emit('join:approve', { roomCode: currentRoom, playerId: pendingJoinRequestId });
+  }
+  pendingJoinRequestId = null;
+  pendingJoinRequestName = null;
+  renderJoinRequestBanner();
+}
+
+function denyJoinRequest() {
+  document.getElementById('join-request-modal').style.display = 'none';
+  if (pendingJoinRequestId && socket && currentRoom) {
+    socket.emit('join:deny', { roomCode: currentRoom, playerId: pendingJoinRequestId });
+  }
+  pendingJoinRequestId = null;
+  pendingJoinRequestName = null;
+  renderJoinRequestBanner();
+}
+
+function renderJoinRequestBanner() {
+  const el = document.getElementById('pt-h-join-requests');
+  if (!el) return;
+  if (!pendingJoinRequestId) {
+    el.style.display = 'none';
+    el.innerHTML = '';
+    return;
+  }
+  el.style.display = 'block';
+  el.innerHTML = `<div style="background:var(--surface2);border:1.5px solid var(--accent3);border-radius:var(--radius);padding:10px 14px;display:flex;align-items:center;justify-content:space-between;gap:8px;">
+    <span style="font-size:13px;"><strong>${esc(pendingJoinRequestName)}</strong> wants to rejoin</span>
+    <div style="display:flex;gap:6px;">
+      <button class="btn btn-secondary btn-sm" onclick="denyJoinRequest()">Deny</button>
+      <button class="btn btn-primary btn-sm" onclick="approveJoinRequest()">Approve</button>
+    </div>
+  </div>`;
+}
+
+function closeJoinPendingModal() {
+  document.getElementById('join-pending-modal').style.display = 'none';
 }
 
 // ── PLAYER BOARD VIEW ──

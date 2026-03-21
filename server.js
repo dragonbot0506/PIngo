@@ -807,9 +807,16 @@ io.on('connection', (socket) => {
             // If this user already has a card in this room, rejoin with existing state
             if (room.participants[participantKey]) {
                 const existing = room.participants[participantKey];
-                // Kicked players may not re-enter
+                // Kicked players submit a join request to the host
                 if (existing.kicked) {
-                    return socket.emit('error', 'You have been removed from this party');
+                    room.pendingJoinRequests = room.pendingJoinRequests || {};
+                    room.pendingJoinRequests[participantKey] = { socketId: socket.id, name: existing.name || name || participantKey };
+                    socket.emit('join:pending', { message: 'Join request sent. Waiting for host approval...' });
+                    if (room.arbiter && room.arbiter.socketId) {
+                        const hostSock = io.sockets.sockets.get(room.arbiter.socketId);
+                        if (hostSock) hostSock.emit('join:request', { playerId: participantKey, playerName: existing.name || name || participantKey });
+                    }
+                    return;
                 }
                 existing.socketId = socket.id;
                 socketToUser[socket.id] = { username: participantKey, roomCode: code };
@@ -1090,7 +1097,8 @@ io.on('connection', (socket) => {
                     .sort((a, b) => (a.place || 999) - (b.place || 999));
             }
 
-            io.to(code).emit('game:over', { standings, gameMode: room.gameMode || 'bingo' });
+            const finalLeaderboard = room.gameMode === 'points' ? computeLeaderboard(room, true) : [];
+            io.to(code).emit('game:over', { standings, gameMode: room.gameMode || 'bingo', leaderboard: finalLeaderboard });
             io.to(code).emit('activity', { message: 'The host has ended the game.' });
             sendPushToAll(room, 'Game Over!', 'The host ended the game. Check the final standings!', null, 'game');
         } catch (err) {
@@ -1499,6 +1507,61 @@ io.on('connection', (socket) => {
             console.error('host:kick error:', err);
             socket.emit('error', 'Failed to kick player');
         }
+    });
+
+    socket.on('join:approve', ({ roomCode, playerId }) => {
+        try {
+            const code = String(roomCode || '').toUpperCase();
+            const room = rooms[code];
+            if (!room || !room.arbiter || room.arbiter.socketId !== socket.id) return;
+            const pending = (room.pendingJoinRequests || {})[playerId];
+            if (!pending) return;
+            delete room.pendingJoinRequests[playerId];
+
+            const participant = room.participants[playerId];
+            if (!participant) return;
+            participant.kicked = false;
+            participant.socketId = pending.socketId;
+
+            socketToUser[pending.socketId] = { username: playerId, roomCode: code };
+            if (users[playerId]) users[playerId].activeRoom = { roomCode: code, isArbiter: false };
+
+            const pendingSock = io.sockets.sockets.get(pending.socketId);
+            if (pendingSock) {
+                pendingSock.join(code);
+                pendingSock.emit('participant:joined', {
+                    participantId: playerId,
+                    card: participant.card,
+                    checked: participant.checked,
+                    gridSize: room.gridSize,
+                    roomCode: code,
+                    partyName: room.partyName,
+                    proofRequired: room.proofRequired || [],
+                    gameState: room.state || 'waiting',
+                    chatHistory: room.chatHistory || [],
+                    activityLog: room.gameMode === 'points' ? (room.activityLog || []) : [],
+                    gameMode: room.gameMode || 'bingo',
+                    activities: room.activities || [],
+                    timerEnd: room.timerEnd || null,
+                    leaderboard: room.gameMode === 'points' ? computeLeaderboard(room) : []
+                });
+            }
+            io.to(code).emit('room:update', { participants: getAllPlayers(room) });
+            io.to(code).emit('activity', { message: `${participant.name} rejoined`, participantName: participant.name });
+        } catch (err) { console.error('join:approve error:', err); }
+    });
+
+    socket.on('join:deny', ({ roomCode, playerId }) => {
+        try {
+            const code = String(roomCode || '').toUpperCase();
+            const room = rooms[code];
+            if (!room || !room.arbiter || room.arbiter.socketId !== socket.id) return;
+            const pending = (room.pendingJoinRequests || {})[playerId];
+            if (!pending) return;
+            delete room.pendingJoinRequests[playerId];
+            const pendingSock = io.sockets.sockets.get(pending.socketId);
+            if (pendingSock) pendingSock.emit('join:denied', { message: 'Your request to rejoin was denied by the host.' });
+        } catch (err) { console.error('join:deny error:', err); }
     });
 
     socket.on('host:transfer', ({ roomCode, newHostId }) => {
