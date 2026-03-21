@@ -289,9 +289,10 @@ function sanitizeParticipants(participants) {
         }));
 }
 
-// Transfers host role to the first available participant, or deletes room if none remain.
+// Transfers host role to a random available participant, or deletes room if none remain.
 function autoTransferHost(room, roomCode, oldHostName) {
-    const nextParticipant = Object.values(room.participants).find(p => !p.kicked);
+    const eligible = Object.values(room.participants).filter(p => !p.kicked);
+    const nextParticipant = eligible.length ? shuffleArray(eligible)[0] : null;
 
     if (!nextParticipant) {
         // No players left — delete the room
@@ -342,6 +343,7 @@ function autoTransferHost(room, roomCode, oldHostName) {
                     gameMode: room.gameMode || 'bingo',
                     activities: room.activities || [],
                     timerEnd: room.timerEnd || null,
+                    activityLog: room.gameMode === 'points' ? (room.activityLog || []) : [],
                     leaderboard: room.gameMode === 'points' ? computeLeaderboard(room) : []
                 }
             });
@@ -371,6 +373,12 @@ function getAllPlayers(room) {
         });
     }
     return players;
+}
+
+function pushActivityLog(room, entry) {
+    if (!room.activityLog) room.activityLog = [];
+    room.activityLog.push({ ...entry, time: Date.now() });
+    if (room.activityLog.length > 200) room.activityLog.shift();
 }
 
 function computeLeaderboard(room, isFinal = false) {
@@ -543,6 +551,7 @@ app.post('/api/rooms', (req, res) => {
             state: 'waiting',
             placementCounter: 0,
             chatHistory: [],
+            activityLog: [],
             createdAt: Date.now(),
             lastActivity: Date.now(),
             gameMode: mode,
@@ -767,10 +776,11 @@ io.on('connection', (socket) => {
                 arbiterChecked: room.arbiter.checked,
                 gameState: room.state || 'waiting',
                 chatHistory: room.chatHistory || [],
+                activityLog: room.gameMode === 'points' ? (room.activityLog || []) : [],
                 gameMode: room.gameMode || 'bingo',
                 activities: room.activities || [],
                 timerEnd: room.timerEnd || null,
-                    leaderboard: room.gameMode === 'points' ? computeLeaderboard(room) : []
+                leaderboard: room.gameMode === 'points' ? computeLeaderboard(room) : []
             });
         } catch (err) {
             console.error('arbiter:join error:', err);
@@ -872,10 +882,11 @@ io.on('connection', (socket) => {
                 partyName: room.partyName,
                 gameState: room.state || 'waiting',
                 chatHistory: room.chatHistory || [],
+                activityLog: room.gameMode === 'points' ? (room.activityLog || []) : [],
                 gameMode: room.gameMode || 'bingo',
                 activities: room.activities || [],
                 timerEnd: room.timerEnd || null,
-                    leaderboard: room.gameMode === 'points' ? computeLeaderboard(room) : []
+                leaderboard: room.gameMode === 'points' ? computeLeaderboard(room) : []
             });
 
             io.to(code).emit('room:update', {
@@ -1174,7 +1185,9 @@ io.on('connection', (socket) => {
             const name = room.participants[playerId]?.name || room.arbiter?.name || playerId;
             const leaderboard = computeLeaderboard(room);
             io.to(code).emit('points:update', { activities: room.activities, leaderboard });
-            io.to(code).emit('activity', { message: `${name} completed "${act.description}"!`, participantName: name });
+            const completeMsg = { message: `${name} completed "${act.description}"!`, participantName: name };
+            pushActivityLog(room, completeMsg);
+            io.to(code).emit('activity', completeMsg);
             sendPushToAll(room, 'Activity Completed!', `${name} completed "${act.description}"`, playerId, 'task');
         } catch (err) { console.error('points:complete error:', err); }
     });
@@ -1195,7 +1208,9 @@ io.on('connection', (socket) => {
             const newCount = act.completions[playerId];
             const leaderboard = computeLeaderboard(room);
             io.to(code).emit('points:update', { activities: room.activities, leaderboard });
-            io.to(code).emit('activity', { message: `${name} logged ${newCount}× "${act.description}"`, participantName: name });
+            const incrMsg = { message: `${name} logged ${newCount}× "${act.description}"`, participantName: name };
+            pushActivityLog(room, incrMsg);
+            io.to(code).emit('activity', incrMsg);
             sendPushToAll(room, 'Counter Updated', `${name}: ${newCount}× ${act.description}`, playerId, 'task');
         } catch (err) { console.error('points:increment error:', err); }
     });
@@ -1218,7 +1233,9 @@ io.on('connection', (socket) => {
             const newCount = act.completions[playerId];
             const leaderboard = computeLeaderboard(room);
             io.to(code).emit('points:update', { activities: room.activities, leaderboard });
-            io.to(code).emit('activity', { message: `${name} adjusted to ${newCount}× "${act.description}"`, participantName: name });
+            const decrMsg = { message: `${name} adjusted to ${newCount}× "${act.description}"`, participantName: name };
+            pushActivityLog(room, decrMsg);
+            io.to(code).emit('activity', decrMsg);
             sendPushToAll(room, 'Counter Adjusted', `${name}: now ${newCount}× ${act.description}`, playerId, 'task');
         } catch (err) { console.error('points:decrement error:', err); }
     });
@@ -1246,7 +1263,9 @@ io.on('connection', (socket) => {
                 room.lastActivity = Date.now();
                 const leaderboard = computeLeaderboard(room);
                 io.to(code).emit('points:update', { activities: room.activities, leaderboard });
-                io.to(code).emit('activity', { message: `${hostName} adjusted "${act.description}" for ${playerName} to ${newCount}`, participantName: playerName });
+                const adjMsg = { message: `${hostName} adjusted "${act.description}" for ${playerName} to ${newCount}`, participantName: playerName };
+                pushActivityLog(room, adjMsg);
+                io.to(code).emit('activity', adjMsg);
                 sendPushToAll(room, 'Host Adjustment', `${hostName} adjusted ${playerName}'s count for "${act.description}"`, null, 'task');
             } else {
                 if (!(act.completions[playerId] > 0)) return;
@@ -1259,7 +1278,9 @@ io.on('connection', (socket) => {
                 room.lastActivity = Date.now();
                 const leaderboard = computeLeaderboard(room);
                 io.to(code).emit('points:update', { activities: room.activities, leaderboard });
-                io.to(code).emit('activity', { message: `${hostName} undid "${act.description}" for ${playerName}`, participantName: playerName });
+                const undoMsg = { message: `${hostName} undid "${act.description}" for ${playerName}`, participantName: playerName };
+                pushActivityLog(room, undoMsg);
+                io.to(code).emit('activity', undoMsg);
                 sendPushToAll(room, 'Host Undo', `${hostName} undid "${act.description}" for ${playerName}`, null, 'task');
             }
         } catch (err) { console.error('points:undo error:', err); }
