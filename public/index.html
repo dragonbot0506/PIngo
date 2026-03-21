@@ -1984,6 +1984,16 @@
   </div>
 </div>
 
+<!-- ──────────────────────── PLAYER DETAIL MODAL ──────────────────────── -->
+<div id="player-detail-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.85);z-index:820;align-items:center;justify-content:center;">
+  <div class="confirm-box" style="padding:24px 20px;gap:12px;max-height:80vh;overflow-y:auto;width:min(380px,90vw);">
+    <p id="player-detail-name" style="font-family:var(--font-display);font-size:20px;color:var(--accent);margin:0;"></p>
+    <p style="font-size:12px;color:var(--muted);margin:0;">Activity completions</p>
+    <div id="player-detail-activity-list" style="display:flex;flex-direction:column;gap:6px;width:100%;"></div>
+    <button class="btn btn-ghost btn-sm" onclick="closePlayerDetail()">Close</button>
+  </div>
+</div>
+
 <!-- ──────────────────────── POINTS CONFIRM MODAL ──────────────────────── -->
 <div id="points-confirm-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.7);z-index:850;align-items:center;justify-content:center;">
   <div class="confirm-box" style="padding:24px 20px;gap:16px;">
@@ -2044,8 +2054,7 @@
 <div id="host-actions-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.85);z-index:600;align-items:center;justify-content:center;">
   <div class="confirm-box">
     <p style="font-family:var(--font-display);font-size:20px;color:var(--accent);">HOST OPTIONS</p>
-    <p style="font-size:14px;color:var(--muted);">As the host, you must transfer your role or delete the party.</p>
-    <button class="btn btn-secondary" onclick="showTransferModal()">TRANSFER HOST</button>
+    <p style="font-size:14px;color:var(--muted);">If you leave, the host role will be transferred to a random player.</p>
     <button class="btn btn-danger" onclick="showDeletePartyModal()">DELETE PARTY</button>
     <button class="btn btn-ghost" onclick="closeHostActions()">Cancel</button>
   </div>
@@ -2261,6 +2270,8 @@ function resetAndGoHome() {
   pointsLeaderboard = [];
   pointsTimerEnd = null;
   currentGameMode = 'bingo';
+  playerDetailOpenId = null;
+  playerDetailOpenName = null;
   if (pointsTimerInterval) { clearInterval(pointsTimerInterval); pointsTimerInterval = null; }
   if (socket) {
     socket.disconnect();
@@ -3447,7 +3458,7 @@ function setupPointsPlayer(data) {
   pointsTimerEnd = data.timerEnd || null;
   pointsLeaderboard = data.leaderboard || [];
   chatLog = Array.isArray(data.chatHistory) ? data.chatHistory : [];
-  activityLog = [];
+  activityLog = Array.isArray(data.activityLog) ? data.activityLog.map(e => ({ ...e, time: new Date(e.time) })) : [];
   chatUnread = { p: 0, a: 0 };
   pointsChatUnread = { 'pt-p': 0, 'pt-h': 0 };
   pendingPointsAction = null;
@@ -3471,11 +3482,12 @@ function setupPointsPlayer(data) {
     pointsLeaderboard = d.leaderboard || [];
     renderPointsActivities('pt-p', false);
     renderPointsLeaderboard('pt-p', pointsLeaderboard);
+    if (playerDetailOpenId) _renderPlayerDetail();
   });
 
   socket.off('activity');
   socket.on('activity', (e) => {
-    activityLog.unshift(e);
+    activityLog.unshift({ ...e, time: new Date() });
     renderPointsFeed('pt-p');
   });
 
@@ -3530,7 +3542,7 @@ function setupPointsHost(data) {
   pointsTimerEnd = data.timerEnd || null;
   pointsLeaderboard = data.leaderboard || [];
   chatLog = Array.isArray(data.chatHistory) ? data.chatHistory : [];
-  activityLog = [];
+  activityLog = Array.isArray(data.activityLog) ? data.activityLog.map(e => ({ ...e, time: new Date(e.time) })) : [];
   chatUnread = { p: 0, a: 0 };
   pointsChatUnread = { 'pt-p': 0, 'pt-h': 0 };
   pendingPointsAction = null;
@@ -3556,11 +3568,12 @@ function setupPointsHost(data) {
     pointsLeaderboard = d.leaderboard || [];
     renderPointsActivities('pt-h', true);
     renderPointsLeaderboard('pt-h', pointsLeaderboard);
+    if (playerDetailOpenId) _renderPlayerDetail();
   });
 
   socket.off('activity');
   socket.on('activity', (e) => {
-    activityLog.unshift(e);
+    activityLog.unshift({ ...e, time: new Date() });
     renderPointsFeed('pt-h');
   });
 
@@ -3657,39 +3670,14 @@ function renderPointsActivities(prefix, isHost) {
       `;
     }
 
-    // Summary line
-    const totalDone = Object.values(act.completions || {}).reduce((s, v) => s + v, 0);
-    const summaryLabel = act.isCounter
-      ? `<span style="font-size:11px;color:var(--muted);">Total across all players: ${totalDone}</span>`
-      : `<span style="font-size:11px;color:var(--muted);">${totalDone} player${totalDone !== 1 ? 's' : ''} completed</span>`;
-
-    // Host undo panel — shows all players' completions for this activity
-    let undoPanel = '';
-    if (isHost && pointsLeaderboard.length > 0) {
-      const undoRows = pointsLeaderboard.map(row => {
-        const c = (act.completions || {})[row.id] || 0;
-        if (!act.isCounter && c === 0) return ''; // skip non-completers for standard
-        return `
-          <div class="host-undo-row">
-            <span class="host-undo-name">${esc(row.name)}</span>
-            <span class="host-undo-count">${act.isCounter ? c : '✓'}</span>
-            <button class="host-undo-btn" onclick="pointsUndo('${esc(act.id)}','${esc(row.id)}','${esc(row.name)}',${act.isCounter})" ${c === 0 ? 'disabled style="opacity:0.4;"' : ''}>↩ Undo</button>
-          </div>`;
-      }).filter(Boolean).join('');
-      if (undoRows) {
-        undoPanel = `<div class="host-undo-panel"><div class="host-undo-title">PLAYER COMPLETIONS</div>${undoRows}</div>`;
-      }
-    }
-
     return `
       <div class="activity-card${isDone ? ' done' : ''}">
         <div class="activity-card-header">
           <div class="activity-card-desc">${esc(act.description)}</div>
           ${ptsLabel}
         </div>
-        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">${summaryLabel}${firstBadge}</div>
+        ${firstBadge ? `<div>${firstBadge}</div>` : ''}
         <div class="activity-card-footer">${controls}</div>
-        ${undoPanel}
       </div>
     `;
   }).join('');
@@ -3710,12 +3698,67 @@ function renderPointsLeaderboard(prefix, leaderboard) {
   }
   const emojis = ['🥇','🥈','🥉'];
   container.innerHTML = note + leaderboard.map((row, i) => `
-    <div class="leaderboard-row" style="${row.id === myParticipantId ? 'border-color:var(--accent);' : ''}">
+    <div class="leaderboard-row" style="cursor:pointer;${row.id === myParticipantId ? 'border-color:var(--accent);' : ''}" onclick="showPlayerDetail('${esc(row.id)}','${esc(row.name)}')">
       <div class="leaderboard-rank">${emojis[i] || (i+1)}</div>
       <div class="leaderboard-name">${esc(row.name)}${row.id === myParticipantId ? ' <span style="font-size:11px;color:var(--accent3);">(you)</span>' : ''}</div>
-      <div class="leaderboard-points">${row.points}</div>
+      <div class="leaderboard-points">${row.points} <span style="font-size:11px;color:var(--muted);">▶</span></div>
     </div>
   `).join('');
+}
+
+let playerDetailOpenId = null;
+let playerDetailOpenName = null;
+
+function showPlayerDetail(playerId, playerName) {
+  playerDetailOpenId = playerId;
+  playerDetailOpenName = playerName;
+  _renderPlayerDetail();
+  document.getElementById('player-detail-modal').style.display = 'flex';
+}
+
+function _renderPlayerDetail() {
+  const playerId = playerDetailOpenId;
+  const playerName = playerDetailOpenName;
+  if (!playerId) return;
+  document.getElementById('player-detail-name').textContent = playerName;
+  const amHost = currentGameMode === 'points' && document.getElementById('screen-points-host') &&
+    document.getElementById('screen-points-host').classList.contains('active');
+  const listEl = document.getElementById('player-detail-activity-list');
+  if (!currentActivities.length) {
+    listEl.innerHTML = '<div class="empty-state">No activities.</div>';
+  } else {
+    listEl.innerHTML = currentActivities.map(act => {
+      const c = (act.completions || {})[playerId] || 0;
+      const hasAny = c > 0;
+      const label = act.isCounter ? `${c}×` : (c > 0 ? '✓' : '—');
+      const undoBtn = amHost && hasAny
+        ? `<button class="host-undo-btn" onclick="pointsUndoFromDetail('${esc(act.id)}','${esc(playerId)}','${esc(playerName)}',${act.isCounter},'${esc(act.description)}')">↩ Undo</button>`
+        : '';
+      return `
+        <div class="host-undo-row">
+          <span class="host-undo-name">${esc(act.description)}</span>
+          <span class="host-undo-count">${label}</span>
+          ${undoBtn}
+        </div>`;
+    }).join('');
+  }
+}
+
+function closePlayerDetail() {
+  document.getElementById('player-detail-modal').style.display = 'none';
+  playerDetailOpenId = null;
+  playerDetailOpenName = null;
+}
+
+function pointsUndoFromDetail(actId, playerId, playerName, isCounter, desc) {
+  const msg = isCounter
+    ? `Remove 1 from "${desc}" for ${playerName}?`
+    : `Undo completion of "${desc}" for ${playerName}?`;
+  promptPointsAction(msg, () => {
+    socket.emit('points:undo', { roomCode: currentRoom, activityId: actId, playerId });
+    haptic();
+    // Re-render the detail modal after the server responds via points:update
+  });
 }
 
 function renderPointsFeed(prefix) {
@@ -3725,8 +3768,11 @@ function renderPointsFeed(prefix) {
     container.innerHTML = '<div class="empty-state">No activity yet!</div>';
     return;
   }
-  container.innerHTML = activityLog.map(e =>
-    `<div class="feed-item"><span class="feed-msg">${esc(e.message)}</span></div>`
+  container.innerHTML = activityLog.slice(0, 50).map(item =>
+    `<div class="activity-item">
+      ${esc(item.message)}
+      <div class="activity-time">${item.time ? formatTime(new Date(item.time)) : ''}</div>
+    </div>`
   ).join('');
 }
 
