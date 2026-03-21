@@ -2448,11 +2448,15 @@ function setupArbiterDashboard(name, roomData) {
   document.getElementById('info-room-password').textContent = roomData.password || '';
   document.getElementById('info-grid-size').textContent = `${roomData.gridSize}×${roomData.gridSize}`;
 
-  // Load room-specific chat history
+  // Load room-specific chat and activity history
   chatLog = Array.isArray(roomData.chatHistory) ? roomData.chatHistory : [];
-  activityLog = [];
+  activityLog = Array.isArray(roomData.activityLog)
+    ? roomData.activityLog.map(e => ({ ...e, time: new Date(e.time) })).reverse()
+    : [];
   chatUnread = { p: 0, a: 0 };
   renderChat();
+  renderFeed('a-feed');
+  renderFeed('p-feed');
 
   // Use server-provided arbiter card (persisted across sessions)
   arbiterCard = roomData.arbiterCard;
@@ -3441,11 +3445,14 @@ function handleParticipantJoined(data) {
   gridSize = data.gridSize;
   roomProofRequired = new Set(data.proofRequired || []);
 
-  // Load room-specific chat history
+  // Load room-specific chat and activity history
   chatLog = Array.isArray(data.chatHistory) ? data.chatHistory : [];
-  activityLog = [];
+  activityLog = Array.isArray(data.activityLog)
+    ? data.activityLog.map(e => ({ ...e, time: new Date(e.time) })).reverse()
+    : [];
   chatUnread = { p: 0, a: 0 };
   renderChat();
+  renderFeed('p-feed');
 
   document.getElementById('p-player-name').textContent = loggedInUser;
   document.getElementById('p-room-code').textContent = data.roomCode;
@@ -3484,7 +3491,9 @@ function setupPointsPlayer(data) {
   pointsTimerEnd = data.timerEnd || null;
   pointsLeaderboard = data.leaderboard || [];
   chatLog = Array.isArray(data.chatHistory) ? data.chatHistory : [];
-  activityLog = Array.isArray(data.activityLog) ? data.activityLog.map(e => ({ ...e, time: new Date(e.time) })) : [];
+  activityLog = Array.isArray(data.activityLog)
+    ? data.activityLog.map(e => ({ ...e, time: new Date(e.time) })).reverse()
+    : [];
   chatUnread = { p: 0, a: 0 };
   pointsChatUnread = { 'pt-p': 0, 'pt-h': 0 };
   pendingPointsAction = null;
@@ -3569,7 +3578,9 @@ function setupPointsHost(data) {
   pointsTimerEnd = data.timerEnd || null;
   pointsLeaderboard = data.leaderboard || [];
   chatLog = Array.isArray(data.chatHistory) ? data.chatHistory : [];
-  activityLog = Array.isArray(data.activityLog) ? data.activityLog.map(e => ({ ...e, time: new Date(e.time) })) : [];
+  activityLog = Array.isArray(data.activityLog)
+    ? data.activityLog.map(e => ({ ...e, time: new Date(e.time) })).reverse()
+    : [];
   chatUnread = { p: 0, a: 0 };
   pointsChatUnread = { 'pt-p': 0, 'pt-h': 0 };
   pendingPointsAction = null;
