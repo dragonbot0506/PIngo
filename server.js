@@ -343,7 +343,7 @@ function autoTransferHost(room, roomCode, oldHostName) {
                     gameMode: room.gameMode || 'bingo',
                     activities: room.activities || [],
                     timerEnd: room.timerEnd || null,
-                    activityLog: room.gameMode === 'points' ? (room.activityLog || []) : [],
+                    activityLog: room.activityLog || [],
                     leaderboard: room.gameMode === 'points' ? computeLeaderboard(room) : []
                 }
             });
@@ -355,7 +355,7 @@ function autoTransferHost(room, roomCode, oldHostName) {
         : `${nextParticipant.name} is now the host.`;
 
     io.to(roomCode).emit('room:update', { participants: getAllPlayers(room) });
-    io.to(roomCode).emit('activity', { message: msg, participantName: nextParticipant.name });
+    emitActivity(roomCode, room, { message: msg, participantName: nextParticipant.name });
 }
 
 function getAllPlayers(room) {
@@ -379,6 +379,12 @@ function pushActivityLog(room, entry) {
     if (!room.activityLog) room.activityLog = [];
     room.activityLog.push({ ...entry, time: Date.now() });
     if (room.activityLog.length > 200) room.activityLog.shift();
+}
+
+// Persists to activityLog AND broadcasts to room
+function emitActivity(roomCode, room, data) {
+    pushActivityLog(room, data);
+    io.to(roomCode).emit('activity', data);
 }
 
 function computeLeaderboard(room, isFinal = false) {
@@ -677,10 +683,7 @@ app.post('/api/leave-room', (req, res) => {
             const name = room.participants[username].name;
             // Keep participant data for state persistence — only clear socket
             room.participants[username].socketId = null;
-            io.to(roomCode).emit('activity', {
-                message: `${name} left the game`,
-                participantName: name
-            });
+            emitActivity(roomCode, room, { message: `${name} left the game`, participantName: name });
         }
     }
 
@@ -776,7 +779,7 @@ io.on('connection', (socket) => {
                 arbiterChecked: room.arbiter.checked,
                 gameState: room.state || 'waiting',
                 chatHistory: room.chatHistory || [],
-                activityLog: room.gameMode === 'points' ? (room.activityLog || []) : [],
+                activityLog: room.activityLog || [],
                 gameMode: room.gameMode || 'bingo',
                 activities: room.activities || [],
                 timerEnd: room.timerEnd || null,
@@ -889,7 +892,7 @@ io.on('connection', (socket) => {
                 partyName: room.partyName,
                 gameState: room.state || 'waiting',
                 chatHistory: room.chatHistory || [],
-                activityLog: room.gameMode === 'points' ? (room.activityLog || []) : [],
+                activityLog: room.activityLog || [],
                 gameMode: room.gameMode || 'bingo',
                 activities: room.activities || [],
                 timerEnd: room.timerEnd || null,
@@ -930,6 +933,7 @@ io.on('connection', (socket) => {
                     arbiterChecked: room.arbiter.checked,
                     gameState: room.state || 'waiting',
                     chatHistory: room.chatHistory || [],
+                    activityLog: room.activityLog || [],
                     gameMode: room.gameMode || 'bingo',
                     activities: room.activities || [],
                     timerEnd: room.timerEnd || null,
@@ -951,6 +955,7 @@ io.on('connection', (socket) => {
                     proofRequired: room.proofRequired || [],
                     gameState: room.state || 'waiting',
                     chatHistory: room.chatHistory || [],
+                    activityLog: room.activityLog || [],
                     gameMode: room.gameMode || 'bingo',
                     activities: room.activities || [],
                     timerEnd: room.timerEnd || null,
@@ -1020,12 +1025,7 @@ io.on('connection', (socket) => {
             if (checkedSet.has(cellIndex) && promptText !== 'FREE') {
                 const message = `${participant.name} Completed: ${promptText}`;
 
-                io.to(code).emit('activity', {
-                    message,
-                    participantName: participant.name,
-                    prompt: promptText
-                });
-
+                emitActivity(code, room, { message, participantName: participant.name, prompt: promptText });
                 sendPushToAll(room, 'Task Completed!', message, userInfo.username, 'task');
             }
 
@@ -1067,7 +1067,7 @@ io.on('connection', (socket) => {
 
             room.state = 'active';
             io.to(code).emit('game:started', { state: 'active' });
-            io.to(code).emit('activity', { message: 'The game has started! Good luck everyone!' });
+            emitActivity(code, room, { message: 'The game has started! Good luck everyone!' });
             sendPushToAll(room, 'Game Started! 🎲', 'The host has started the game. Good luck!', null, 'game');
         } catch (err) {
             console.error('game:start error:', err);
@@ -1099,7 +1099,7 @@ io.on('connection', (socket) => {
 
             const finalLeaderboard = room.gameMode === 'points' ? computeLeaderboard(room, true) : [];
             io.to(code).emit('game:over', { standings, gameMode: room.gameMode || 'bingo', leaderboard: finalLeaderboard });
-            io.to(code).emit('activity', { message: 'The host has ended the game.' });
+            emitActivity(code, room, { message: 'The host has ended the game.' });
             sendPushToAll(room, 'Game Over!', 'The host ended the game. Check the final standings!', null, 'game');
         } catch (err) {
             console.error('game:end error:', err);
@@ -1169,7 +1169,7 @@ io.on('connection', (socket) => {
             room.lastActivity = Date.now();
             io.to(code).emit('game:started', { state: 'active' });
             io.to(code).emit('room:update', { participants: getAllPlayers(room) });
-            io.to(code).emit('activity', { message: 'New round started! Cards reshuffled.' });
+            emitActivity(code, room, { message: 'New round started! Cards reshuffled.' });
         } catch (err) {
             console.error('game:reset error:', err);
         }
@@ -1194,8 +1194,7 @@ io.on('connection', (socket) => {
             const leaderboard = computeLeaderboard(room);
             io.to(code).emit('points:update', { activities: room.activities, leaderboard });
             const completeMsg = { message: `${name} completed "${act.description}"!`, participantName: name };
-            pushActivityLog(room, completeMsg);
-            io.to(code).emit('activity', completeMsg);
+            emitActivity(code, room, completeMsg);
             sendPushToAll(room, 'Activity Completed!', `${name} completed "${act.description}"`, playerId, 'task');
         } catch (err) { console.error('points:complete error:', err); }
     });
@@ -1217,8 +1216,7 @@ io.on('connection', (socket) => {
             const leaderboard = computeLeaderboard(room);
             io.to(code).emit('points:update', { activities: room.activities, leaderboard });
             const incrMsg = { message: `${name} logged ${newCount}× "${act.description}"`, participantName: name };
-            pushActivityLog(room, incrMsg);
-            io.to(code).emit('activity', incrMsg);
+            emitActivity(code, room, incrMsg);
             sendPushToAll(room, 'Counter Updated', `${name}: ${newCount}× ${act.description}`, playerId, 'task');
         } catch (err) { console.error('points:increment error:', err); }
     });
@@ -1242,8 +1240,7 @@ io.on('connection', (socket) => {
             const leaderboard = computeLeaderboard(room);
             io.to(code).emit('points:update', { activities: room.activities, leaderboard });
             const decrMsg = { message: `${name} adjusted to ${newCount}× "${act.description}"`, participantName: name };
-            pushActivityLog(room, decrMsg);
-            io.to(code).emit('activity', decrMsg);
+            emitActivity(code, room, decrMsg);
             sendPushToAll(room, 'Counter Adjusted', `${name}: now ${newCount}× ${act.description}`, playerId, 'task');
         } catch (err) { console.error('points:decrement error:', err); }
     });
@@ -1272,8 +1269,7 @@ io.on('connection', (socket) => {
                 const leaderboard = computeLeaderboard(room);
                 io.to(code).emit('points:update', { activities: room.activities, leaderboard });
                 const adjMsg = { message: `${hostName} adjusted "${act.description}" for ${playerName} to ${newCount}`, participantName: playerName };
-                pushActivityLog(room, adjMsg);
-                io.to(code).emit('activity', adjMsg);
+                emitActivity(code, room, adjMsg);
                 sendPushToAll(room, 'Host Adjustment', `${hostName} adjusted ${playerName}'s count for "${act.description}"`, null, 'task');
             } else {
                 if (!(act.completions[playerId] > 0)) return;
@@ -1287,8 +1283,7 @@ io.on('connection', (socket) => {
                 const leaderboard = computeLeaderboard(room);
                 io.to(code).emit('points:update', { activities: room.activities, leaderboard });
                 const undoMsg = { message: `${hostName} undid "${act.description}" for ${playerName}`, participantName: playerName };
-                pushActivityLog(room, undoMsg);
-                io.to(code).emit('activity', undoMsg);
+                emitActivity(code, room, undoMsg);
                 sendPushToAll(room, 'Host Undo', `${hostName} undid "${act.description}" for ${playerName}`, null, 'task');
             }
         } catch (err) { console.error('points:undo error:', err); }
@@ -1337,7 +1332,7 @@ io.on('connection', (socket) => {
                 socket.emit('cell:updated', { checked: participant.checked, hasBingo: participant.hasBingo });
 
                 const message = `${participant.name} Completed: ${cellText} 📷`;
-                io.to(code).emit('activity', { message, participantName: participant.name, prompt: cellText });
+                emitActivity(code, room, { message, participantName: participant.name, prompt: cellText });
                 sendPushToAll(room, 'Task Completed!', message, userInfo.username, 'task');
 
                 if (!hadBingo && participant.hasBingo) {
@@ -1458,11 +1453,7 @@ io.on('connection', (socket) => {
             }
 
             const promptText = target.card[cellIndex];
-            io.to(code).emit('activity', {
-                message: `Host unchecked "${promptText}" for ${target.name}`,
-                participantName: target.name,
-                prompt: promptText
-            });
+            emitActivity(code, room, { message: `Host unchecked "${promptText}" for ${target.name}`, participantName: target.name, prompt: promptText });
 
             io.to(code).emit('room:update', { participants: getAllPlayers(room) });
         } catch (err) {
@@ -1502,7 +1493,7 @@ io.on('connection', (socket) => {
             }
 
             io.to(code).emit('room:update', { participants: getAllPlayers(room) });
-            io.to(code).emit('activity', { message: `${name} was kicked`, participantName: name });
+            emitActivity(code, room, { message: `${name} was kicked`, participantName: name });
         } catch (err) {
             console.error('host:kick error:', err);
             socket.emit('error', 'Failed to kick player');
@@ -1539,7 +1530,7 @@ io.on('connection', (socket) => {
                     proofRequired: room.proofRequired || [],
                     gameState: room.state || 'waiting',
                     chatHistory: room.chatHistory || [],
-                    activityLog: room.gameMode === 'points' ? (room.activityLog || []) : [],
+                    activityLog: room.activityLog || [],
                     gameMode: room.gameMode || 'bingo',
                     activities: room.activities || [],
                     timerEnd: room.timerEnd || null,
@@ -1547,7 +1538,7 @@ io.on('connection', (socket) => {
                 });
             }
             io.to(code).emit('room:update', { participants: getAllPlayers(room) });
-            io.to(code).emit('activity', { message: `${participant.name} rejoined`, participantName: participant.name });
+            emitActivity(code, room, { message: `${participant.name} rejoined`, participantName: participant.name });
         } catch (err) { console.error('join:approve error:', err); }
     });
 
@@ -1666,7 +1657,7 @@ io.on('connection', (socket) => {
             }
 
             io.to(code).emit('room:update', { participants: getAllPlayers(room) });
-            io.to(code).emit('activity', { message: `${newHost.name} is now the host`, participantName: newHost.name });
+            emitActivity(code, room, { message: `${newHost.name} is now the host`, participantName: newHost.name });
         } catch (err) {
             console.error('host:transfer error:', err);
             socket.emit('error', 'Failed to transfer host');
