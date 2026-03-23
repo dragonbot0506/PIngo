@@ -12,14 +12,10 @@ if (supabaseUrl && supabaseKey) {
     console.log('Supabase not configured — running in-memory only (data will not persist across restarts)');
 }
 
-// In-memory fallback stores (used when Supabase is not configured)
-const _users = {};    // { username: { username, passwordHash, usernameChanged, settings } }
-const _sessions = {}; // { token: { username } }
-
 // ── USER FUNCTIONS ──
 
 async function getUser(username) {
-    if (!supabase) return _users[username] || null;
+    if (!supabase) return null;
     const { data, error } = await supabase
         .from('users')
         .select('*')
@@ -35,15 +31,7 @@ async function getUser(username) {
 }
 
 async function createUser(username, passwordHash, settings) {
-    if (!supabase) {
-        _users[username] = {
-            username,
-            passwordHash,
-            usernameChanged: false,
-            settings: settings || { notifications: true, autoConfirm: false, haptic: true }
-        };
-        return;
-    }
+    if (!supabase) return;
     const { error } = await supabase
         .from('users')
         .insert({
@@ -56,14 +44,7 @@ async function createUser(username, passwordHash, settings) {
 }
 
 async function updateUser(username, fields) {
-    if (!supabase) {
-        const user = _users[username];
-        if (!user) return;
-        if (fields.passwordHash !== undefined) user.passwordHash = fields.passwordHash;
-        if (fields.usernameChanged !== undefined) user.usernameChanged = fields.usernameChanged;
-        if (fields.settings !== undefined) user.settings = fields.settings;
-        return;
-    }
+    if (!supabase) return;
     const update = {};
     if (fields.passwordHash !== undefined) update.password_hash = fields.passwordHash;
     if (fields.usernameChanged !== undefined) update.username_changed = fields.usernameChanged;
@@ -76,14 +57,7 @@ async function updateUser(username, fields) {
 }
 
 async function deleteUser(username) {
-    if (!supabase) {
-        delete _users[username];
-        // Cascade: delete sessions for this user
-        for (const token of Object.keys(_sessions)) {
-            if (_sessions[token].username === username) delete _sessions[token];
-        }
-        return;
-    }
+    if (!supabase) return;
     const { error } = await supabase
         .from('users')
         .delete()
@@ -92,7 +66,7 @@ async function deleteUser(username) {
 }
 
 async function userExists(username) {
-    if (!supabase) return !!_users[username];
+    if (!supabase) return false;
     const { data } = await supabase
         .from('users')
         .select('username')
@@ -102,23 +76,7 @@ async function userExists(username) {
 }
 
 async function renameUser(oldUsername, newUsername, extraFields) {
-    if (!supabase) {
-        const user = _users[oldUsername];
-        if (!user) return;
-        user.username = newUsername;
-        if (extraFields && extraFields.usernameChanged !== undefined) {
-            user.usernameChanged = extraFields.usernameChanged;
-        }
-        _users[newUsername] = user;
-        delete _users[oldUsername];
-        // Cascade: update sessions
-        for (const token of Object.keys(_sessions)) {
-            if (_sessions[token].username === oldUsername) {
-                _sessions[token].username = newUsername;
-            }
-        }
-        return;
-    }
+    if (!supabase) return;
     const update = { username: newUsername };
     if (extraFields) {
         if (extraFields.usernameChanged !== undefined) update.username_changed = extraFields.usernameChanged;
@@ -134,10 +92,7 @@ async function renameUser(oldUsername, newUsername, extraFields) {
 // ── SESSION FUNCTIONS ──
 
 async function createSession(token, username) {
-    if (!supabase) {
-        _sessions[token] = { username };
-        return;
-    }
+    if (!supabase) return;
     const { error } = await supabase
         .from('sessions')
         .insert({ token, username });
@@ -145,7 +100,7 @@ async function createSession(token, username) {
 }
 
 async function getSession(token) {
-    if (!supabase) return _sessions[token] || null;
+    if (!supabase) return null;
     const { data, error } = await supabase
         .from('sessions')
         .select('username')
@@ -156,10 +111,7 @@ async function getSession(token) {
 }
 
 async function deleteSession(token) {
-    if (!supabase) {
-        delete _sessions[token];
-        return;
-    }
+    if (!supabase) return;
     const { error } = await supabase
         .from('sessions')
         .delete()
@@ -168,12 +120,7 @@ async function deleteSession(token) {
 }
 
 async function deleteSessionsByUsername(username) {
-    if (!supabase) {
-        for (const token of Object.keys(_sessions)) {
-            if (_sessions[token].username === username) delete _sessions[token];
-        }
-        return;
-    }
+    if (!supabase) return;
     const { error } = await supabase
         .from('sessions')
         .delete()
